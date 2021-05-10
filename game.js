@@ -6,6 +6,8 @@ let cursorY = 0
 let newClick = false
 let clickX = 0
 let clickY = 0
+const basicSpeedXY = 1
+const aimLength = 100
 
 function init() {
     canvas.width = 504
@@ -23,19 +25,50 @@ function init() {
     })
 }
 
+class Common {
+    static getBasicVector(length) {
+        const x0 = canvas.height / 2
+        const y0 = canvas.width
+        const cx = cursorX
+        const cy = cursorY
+
+        const a = x0 - cx
+        const b = y0 - cy
+        const c = Math.sqrt(a ** 2 + b ** 2)
+        const k = length / c
+        const va = k * a
+        const vb = k * b
+        const x = x0 - va
+        const y = y0 - vb
+        return { x: x, y: y }
+    }
+}
+
 class Ball {
     constructor() {
-        this.x = 0
-        this.y = 0
         this.radius = 12
+        this.x = canvas.width / 2
+        this.y = canvas.height
         this.color = 'green'
+        this.moveX = 0
+        this.moveY = 0
     }
     draw() {
+        console.log(`x(${this.x}) y(${this.y})`)
+        console.log(`move: x(${this.moveX}) y(${this.moveY})`)
+        // move the ball
+        this.x += this.moveX
+        this.y += this.moveY
+
         ctx.fillStyle = 'green'
         ctx.beginPath()
         ctx.arc(this.x, this.y, this.radius, 0, 2 * Math.PI)
         ctx.fill()
-        // ctx.stroke()
+    }
+    pull() {
+        const { x, y } = Common.getBasicVector(basicSpeedXY)
+        this.moveX = -1
+        this.moveY = -1
     }
 }
 
@@ -52,38 +85,44 @@ let game = {
     items: [],
 
     drawAimingLine() {
+        const { x: aimX, y: aimY } = Common.getBasicVector(aimLength)
+
         const x1 = canvas.height / 2
         const y1 = canvas.width
         const x2 = cursorX
         const y2 = cursorY
 
         dx = (y1 / (y1 - y2)) * (x2 - x1)
-        toX = x1 + dx
-        toY = 0
+        endX = x1 + dx
+        endY = 0
 
         ctx.strokeStyle = 'red'
         ctx.beginPath()
-        ctx.moveTo(cursorX, cursorY)
-        ctx.lineTo(toX, toY)
+        ctx.moveTo(aimX, aimY)
+        ctx.lineTo(endX, endY)
         ctx.stroke()
 
         ctx.strokeStyle = 'white'
         ctx.beginPath()
         ctx.moveTo(canvas.width / 2, canvas.height)
-        ctx.lineTo(cursorX, cursorY)
+        ctx.lineTo(aimX, aimY)
         ctx.stroke()
     },
 
     gameLoop() {
-        console.trace(this)
         this.gameLogic()
         this.render()
     },
 
     gameLogic() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height)
+
         if (this.currentEvent === GameEvents.aiming && newClick) {
-            currentBall = new Ball()
+            this.currentEvent = GameEvents.flight
+            const currentBall = new Ball()
             this.items.push(currentBall)
+            currentBall.pull()
+            // clearInterval(this.interval)
         }
     },
 
@@ -97,65 +136,4 @@ let game = {
 }
 
 init()
-// game.gameLoop.bind(game)
-game.interval = setInterval(game.gameLoop.bind(game), 1000 / 60)
-
-// class Item {
-//     constructor() {
-//         this.x = 0 // horizontal
-//         this.y = 0 // vertical
-//         this.wight = 25
-//         this.height = 25
-//         this.color = 'green'
-//     }
-//     move(changeX = 0, changeY = 0) {
-//         this.x += changeX
-//         this.y += changeY
-//     }
-//     moveTo(x, y) {
-//         this.x = x
-//         this.y = y
-//     }
-//     draw() {
-//         ctx.fillStyle = this.color
-//         ctx.fillRect(this.x, this.y, this.wight, this.wight)
-//     }
-// }
-
-// // let box = new Item()
-
-// drawAimingLine()
-
-// // draw line
-// function drawAimingLine() {
-//     ctx.strokeStyle = 'white'
-//     ctx.beginPath()
-//     ctx.moveTo(canvas.width / 2, canvas.height)
-//     ctx.lineTo(0, 0)
-//     ctx.stroke()
-// }
-
-// const showLonInterval = setInterval(animate, 1000 / 25, box)
-
-// pos = 200
-// function animate(box) {
-//     ctx.clearRect(0, 0, canvas.width, canvas.height)
-//     pos += 1
-
-//     if (pos >= 200) {
-//         pos = 0
-//         box.moveTo(0, 50)
-//     }
-
-//     box.draw()
-//     box.move(1, 0)
-// }
-
-// (x-x1)/(x2-x1) = (y- y1)/(y2-y1)
-// (x-x1)/a = (y-y1)/b
-// x-x1 = a/b (y-y1)
-// x = y*a/b – y1*a/b + x1
-
-// (y-y1)/b = (x-x1)/a
-// y – y1 = (x-x1)*b/a
-// y = x*b/a – x1*b/a + y1
+game.interval = setInterval(game.gameLoop.bind(game), 1000 / 2)
