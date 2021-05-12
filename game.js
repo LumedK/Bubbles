@@ -22,18 +22,27 @@ class Field {
         this.aimY = this.canvas.height
 
         canvas.addEventListener('mousemove', (event) => {
-            this.cursorX = event.layerX
-            this.cursorY = event.layerY
+            const cursorXY = this.#getCursor(event.layerX, event.layerY)
+            this.cursorX = cursorXY.x
+            this.cursorY = cursorXY.y
         })
 
         canvas.addEventListener('click', (event) => {
-            this.clickX = event.layerX
-            this.clickY = event.layerY
+            const cursorXY = this.#getCursor(event.layerX, event.layerY)
+            this.clickX = cursorXY.x
+            this.clickY = cursorXY.y
         })
     }
 
+    #getCursor(layerX, layerY) {
+        return {
+            x: (this.canvas.width / this.canvas.offsetWidth) * layerX,
+            y: (this.canvas.height / this.canvas.offsetHeight) * layerY
+        }
+    }
+
     render() {
-        console.log('render game objects')
+        // console.log('render game objects')
         const canvas = this.canvas
         const ctx = this.ctx
 
@@ -108,7 +117,7 @@ class GameEvent {
             ball.moveVector = moveVector
 
             this.game.objects.push(ball)
-            this.game.currentBall = ball
+            // this.game.currentBall = ball
 
             field.clickX = -1
             field.clickY = -1
@@ -142,7 +151,30 @@ class GameEvent {
             if (outLeft || outRight) {
                 this.ball.moveVector.reflectByX()
             } else if (outTop) {
-                this.game.stop()
+                // get the nearest empty cell
+                const nearestEmptyCell = this.game.grid.cells
+                    .slice()
+                    .sort(function (a, b) {
+                        const ball = a.game.currentEvent.ball
+                        function getRange(ball, cell) {
+                            const isCellEmpty = cell.ball === null
+                            const range = isCellEmpty
+                                ? new Vector(ball.x, ball.y, cell.x, cell.y)
+                                      ._len
+                                : 1000 //(ball.radius * 2 + 1)
+                            return range
+                        }
+                        return getRange(ball, a) - getRange(ball, b)
+                    })[0]
+                this.ball.x = nearestEmptyCell.x
+                this.ball.y = nearestEmptyCell.y
+                this.ball.moveVector.len = 0
+                nearestEmptyCell.ball = ball
+
+                // change event
+                let nextEvent = new GameEvent.Aiming(this.game)
+                // nextEvent.ball = ball
+                this.game.currentEvent = nextEvent
             }
         }
     }
@@ -154,10 +186,10 @@ class GameObject {
         this.field = game.field
         this.isRender = true
 
-        console.log('created a new obj')
+        // console.log('created a new obj')
     }
     draw() {
-        console.log('draw an obj')
+        // console.log('draw an obj')
     }
 
     static AimingLine = class extends GameObject {
@@ -263,6 +295,7 @@ class GameObject {
             this.y = y
             this.row = row
             this.col = column
+            this.ball = null
         }
     }
 }
