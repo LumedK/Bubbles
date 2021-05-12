@@ -5,15 +5,21 @@ class Field {
         this.ctx = this.canvas.getContext('2d')
         this.cursorX = 0
         this.cursorY = 0
-        this.clickX = 0
-        this.clickY = 0
+        this.clickX = -1
+        this.clickY = -1
+        this.aimX = -1
+        this.aimY = -1
+
         this.setup()
     }
     setup() {
         let canvas = this.canvas
 
-        canvas.width = 504
+        canvas.width = 480
         canvas.height = canvas.offsetHeight
+
+        this.aimX = this.canvas.width / 2
+        this.aimY = this.canvas.height
 
         canvas.addEventListener('mousemove', (event) => {
             this.cursorX = event.layerX
@@ -41,19 +47,19 @@ class Field {
 }
 
 class Game {
-    constructor() {
-        this.field = null
+    constructor(field) {
+        this.field = field
+        field.game = this
         this.interval = null
         this.maxFps = 60
         this.currentEvent = new GameEvent(this)
+        this.grid = new GameObject.Grid(this)
         this.objects = []
+        this.objects.push(this.grid)
+        this.objects.push(new GameObject.AimingLine(this))
     }
-    start(field) {
-        this.field = field
-        field.game = this
-
+    start() {
         this.currentEvent = new GameEvent.Aiming(this)
-
         this.interval = setInterval(this.main.bind(this), 1000 / this.maxFps)
         console.log('game started')
     }
@@ -84,8 +90,60 @@ class GameEvent {
     static Aiming = class extends GameEvent {
         do() {
             console.log('game event: aiming')
-            const aimingLine = new GameObject.AimingLine(this.game)
-            this.game.objects.push(aimingLine)
+
+            const field = this.game.field
+            const wasClick = field.clickX > -1 || field.clickY > -1
+            if (!wasClick) {
+                return
+            }
+            // prepare ball
+            let ball = new GameObject.Ball()
+            let moveVector = new Vector(
+                field.aimX,
+                field.aimY,
+                field.clickX,
+                field.clickY
+            )
+            moveVector.len = ball.speed
+            ball.moveVector = moveVector
+
+            this.game.objects.push(ball)
+            this.game.currentBall = ball
+
+            field.clickX = -1
+            field.clickY = -1
+
+            // change event
+            let nextEvent = new GameEvent.CheckCollision(this.game)
+            nextEvent.ball = ball
+            this.game.currentEvent = nextEvent
+        }
+    }
+
+    static CheckCollision = class extends GameEvent {
+        constructor(game) {
+            super(game)
+            this.ball = null
+        }
+        do() {
+            super.do()
+            // move the ball
+            let ball = this.ball
+            let moveVector = ball.moveVector
+            moveVector.xStart = moveVector._xEnd
+            moveVector.yStart = moveVector._yEnd
+            ball.x = moveVector._xEnd
+            ball.y = moveVector._yEnd
+            // check collisions
+            const outLeft = ball.x - ball.radius <= 0
+            const outRight =
+                ball.x + ball.radius >= this.game.field.canvas.width
+            const outTop = ball.y - ball.radius <= 0
+            if (outLeft || outRight) {
+                this.ball.moveVector.reflectByX()
+            } else if (outTop) {
+                this.game.stop()
+            }
         }
     }
 }
@@ -111,20 +169,20 @@ class GameObject {
             super.draw()
 
             const ctx = this.field.ctx
-            const canvas = this.field.canvas
+            // const canvas = this.field.canvas
             const cursorX = this.field.cursorX
             const cursorY = this.field.cursorY
 
-            const xAimStart = canvas.width / 2
-            const yAimStart = canvas.height
+            const aimX = this.field.aimX
+            const aimY = this.field.aimY
 
-            const aimVector = new Vector(xAimStart, yAimStart, cursorX, cursorY)
+            const aimVector = new Vector(aimX, aimY, cursorX, cursorY)
 
             // dev aim
             aimVector.len = 1000
             ctx.strokeStyle = 'red'
             ctx.beginPath()
-            ctx.moveTo(xAimStart, yAimStart)
+            ctx.moveTo(aimX, aimY)
             ctx.lineTo(aimVector._xEnd, aimVector._yEnd)
             ctx.stroke()
 
@@ -132,32 +190,79 @@ class GameObject {
 
             ctx.strokeStyle = 'white'
             ctx.beginPath()
-            ctx.moveTo(xAimStart, yAimStart)
+            ctx.moveTo(aimX, aimY)
             ctx.lineTo(aimVector._xEnd, aimVector._yEnd)
             ctx.stroke()
+        }
+    }
 
-            // const { x: aimX, y: aimY } = Common.getBasicVector(aimLength)
+    static Ball = class extends GameObject {
+        static radius = 12
+        constructor() {
+            super(game)
+            this.x = game.field.aimX
+            this.y = game.field.aimY
+            this.radius = 12
+            this.moveVector = null
+            this.speed = 5
+        }
+        draw() {
+            super.draw()
+            const ctx = this.field.ctx
 
-            // const x1 = canvas.height / 2
-            // const y1 = canvas.width
-            // const x2 = cursorX
-            // const y2 = cursorY
+            ctx.fillStyle = 'green'
+            ctx.beginPath()
+            ctx.arc(this.x, this.y, this.radius, 0, 2 * Math.PI)
+            ctx.fill()
+        }
+    }
 
-            // dx = (y1 / (y1 - y2)) * (x2 - x1)
-            // endX = x1 + dx
-            // endY = 0
+    static Grid = class extends GameObject {
+        constructor(game) {
+            super(game)
+            this.cells = []
+            const distance = GameObject.Ball.radius * 2
+            let yShift = distance / 2
+            for (let row = 0; row < 20; row++) {
+                const xShift = (distance / 2) * ((row + 1) % 2)
+                for (let col = 0; col < 20; col++) {
+                    if (col * distance + xShift === 0) {
+                        continue
+                    }
 
-            // ctx.strokeStyle = 'red'
-            // ctx.beginPath()
-            // ctx.moveTo(aimX, aimY)
-            // ctx.lineTo(endX, endY)
-            // ctx.stroke()
+                    const cell = new GameObject.Cell(
+                        game, // game
+                        this, // grid
+                        col * distance + xShift, // x
+                        row * distance + yShift, // y
+                        row, // row
+                        col // column
+                    )
+                    this.cells.push(cell)
+                }
+            }
+        }
+        draw() {
+            super.draw()
+            const ctx = this.game.field.ctx
 
-            // ctx.strokeStyle = 'white'
-            // ctx.beginPath()
-            // ctx.moveTo(canvas.width / 2, canvas.height)
-            // ctx.lineTo(aimX, aimY)
-            // ctx.stroke()
+            this.cells.forEach((point) => {
+                ctx.fillStyle = 'yellow'
+                ctx.beginPath()
+                ctx.arc(point.x, point.y, 1, 0, 2 * Math.PI)
+                ctx.fill()
+            })
+        }
+    }
+
+    static Cell = class extends GameObject {
+        constructor(game, grid, x, y, row, column) {
+            super(game)
+            this.grid = grid
+            this.x = x
+            this.y = y
+            this.row = row
+            this.col = column
         }
     }
 }
@@ -182,17 +287,58 @@ class Vector {
         this._len = newLen
     }
     set xStart(xNewStart) {
-        this._xStart = _xNewStart
+        this._xStart = xNewStart
         this._xEnd = this._xStart + this._x
     }
-    set yStart(_yNewStart) {
-        this._yStart = _yNewStart
+    set yStart(yNewStart) {
+        this._yStart = yNewStart
         this._yEnd = this._yStart + this._y
+    }
+    reflectByX() {
+        this._x = -this._x
+        this._xEnd = this._xEnd + 2 * this._x
     }
 }
 
-game = new Game()
-game.start(new Field())
+game = new Game(new Field())
+game.start()
+
+// drawCells()
+
+// // radius
+
+// function drawCells() {
+//     const cells = []
+//     const distance = 12 * 2
+//     let yShift = distance / 2
+//     for (let row = 0; row < 20; row++) {
+//         const xShift = (distance / 2) * ((row + 1) % 2)
+//         for (let col = 0; col < 20; col++) {
+//             if (col * distance + xShift === 0) {
+//                 continue
+//             }
+//             const point = {
+//                 x: col * distance + xShift,
+//                 y: row * distance + yShift,
+//                 row: row,
+//                 col: col
+//             }
+//             cells.push(point)
+//         }
+//     }
+//     //draw
+//     const field = new Field()
+//     const ctx = field.ctx
+
+//     cells.forEach((point) => {
+//         ctx.fillStyle = 'yellow'
+//         ctx.beginPath()
+//         ctx.arc(point.x, point.y, 1, 0, 2 * Math.PI)
+//         ctx.fill()
+//     })
+
+//     console.trace(cells)
+// }
 
 // global
 // const canvas = document.getElementById('gameField')
