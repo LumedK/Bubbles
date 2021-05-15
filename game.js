@@ -100,6 +100,7 @@ class GameEvent {
         constructor(game) {
             super(game)
             this.ball = new GameObject.Ball(game)
+            this.ball.type = 1 // debug
             this.game.objects.push(this.ball)
         }
         do() {
@@ -156,8 +157,12 @@ class GameEvent {
 
             // const nearestCells = this.game.grid.getNearestCells(ball.x, ball.y)
             const grid = this.game.grid
+            // const nearestCells = grid.getCellsAround(
+            //     grid.getTheNearestCell(ball.x, ball.y)
+            // )
+
             const nearestCells = grid.getCellsAround(
-                grid.getTheNearestCell(ball.x, ball.y)
+                grid.sortCellByDistance(grid.sells, ball.x, ball.y, 0)
             )
 
             const nearestFullCells = []
@@ -200,21 +205,39 @@ class GameEvent {
             cellForBall.ball = ball
 
             // change event
-            let nextEvent = new GameEvent.Aiming(this.game)
-
-            // nextEvent.ball = ball
-            this.game.currentEvent = nextEvent
+            this.game.currentEvent = new GameEvent.Popping(this.game, ball)
         }
     }
 
     static Popping = class extends GameEvent {
         constructor(game, ball) {
             super(game)
-            this.ball = null
+            this.ball = ball
         }
         do() {
             super.do()
-            // get around
+            const grid = this.game.grid
+            const ball = this.ball
+
+            const surroundingCells = grid.getCellsAround(
+                grid.sortCellByDistance(grid.sells, ball.x, ball.y, 0)
+            )
+            const currentType = this.ball.type
+            let typeCount = 0
+            surroundingCells.forEach((cell) => {
+                if (cell.ball && cell.ball.type === currentType) {
+                    ++typeCount
+                }
+            })
+            // Wrong! use recursion to get linked cell
+            const doPopping = typeCount >= 3
+            if (doPopping) {
+                console.log('DO POPPING')
+            }
+
+            // change event
+            this.game.currentEvent = new GameEvent.Aiming(this.game)
+
             // check 3 of one type
             // pop it
             // check the binding to the ceiling
@@ -333,6 +356,7 @@ class GameObject {
             }
             return cells
         }
+        s
 
         draw() {
             super.draw()
@@ -346,7 +370,8 @@ class GameObject {
             })
         }
 
-        getTheNearestCell(x, y) {
+        sortCellByDistance(array, x, y, len = 0) {
+            //! rework. Need to filter(not more than 2R) before sorting
             const point = { x: x, y: y }
             function getRange(cell) {
                 return new Vector(point.x, point.y, cell.x, cell.y)._len
@@ -355,7 +380,7 @@ class GameObject {
                 .slice() // making copy
                 .sort((a, b) => {
                     return getRange(a) - getRange(b)
-                })[0]
+                })[len]
             return theNearestCell
         }
 
@@ -370,15 +395,16 @@ class GameObject {
             const row = cell.row
             const col = cell.col
             const cellsAround = []
-            cellsAround.push(this.getCellByPosition(row, --col)) // left cell
-            cellsAround.push(this.getCellByPosition(row, ++col)) // right cell
-            cellsAround.push(this.getCellByPosition(++row, col)) // top cell
-            cellsAround.push(this.getCellByPosition(--row, col)) // bottom cell
+            cellsAround.push(this.getCellByPosition(row, col)) // current cell
+            cellsAround.push(this.getCellByPosition(row, col - 1)) // left cell
+            cellsAround.push(this.getCellByPosition(row, col + 1)) // right cell
+            cellsAround.push(this.getCellByPosition(row + 1, col)) // top cell
+            cellsAround.push(this.getCellByPosition(row - 1, col)) // bottom cell
             const shift = row % 2 === 0 ? 1 : -1
-            cellsAround.push(this.getCellByPosition(++row, col + shift)) // top shift cell
-            cellsAround.push(this.getCellByPosition(--row, col + shift)) // bottom shift cell
-            return cells.filter((cell) => {
-                return (cell = true)
+            cellsAround.push(this.getCellByPosition(row + 1, col + shift)) // top shift cell
+            cellsAround.push(this.getCellByPosition(row - 1, col + shift)) // bottom shift cell
+            return cellsAround.filter((c) => {
+                return c !== undefined
             }) // delete undefined
         }
     }
