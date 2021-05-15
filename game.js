@@ -143,39 +143,109 @@ class GameEvent {
             moveVector.yStart = moveVector._yEnd
             ball.x = moveVector._xEnd
             ball.y = moveVector._yEnd
+
             // check collisions
             const outLeft = ball.x - ball.radius <= 0
             const outRight =
                 ball.x + ball.radius >= this.game.field.canvas.width
             const outTop = ball.y - ball.radius <= 0
+            const nearestCells = this.game.grid.cells
+                .slice()
+                .sort(function (a, b) {
+                    const ball = a.game.currentEvent.ball
+                    function getRange(ball, cell) {
+                        return new Vector(ball.x, ball.y, cell.x, cell.y)._len
+                    }
+                    return getRange(ball, a) - getRange(ball, b)
+                })
+                .slice(0, 6)
+            const nearestFullCells = []
+            const nearestEmptyCells = []
+            nearestCells.forEach((cell) => {
+                const isEmptyCell = cell.ball === null
+                if (isEmptyCell) {
+                    nearestEmptyCells.push(cell)
+                } else {
+                    nearestFullCells.push(cell)
+                }
+            })
+            const theNearestFullCell =
+                nearestFullCells.length > 0 ? nearestFullCells[0] : null
+            const theNearestEmptyCell =
+                nearestEmptyCells.length > 0 ? nearestEmptyCells[0] : null
+
+            let cellForBall = null
             if (outLeft || outRight) {
                 this.ball.moveVector.reflectByX()
+                return
             } else if (outTop) {
-                // get the nearest empty cell
-                const nearestEmptyCell = this.game.grid.cells
-                    .slice()
-                    .sort(function (a, b) {
-                        const ball = a.game.currentEvent.ball
-                        function getRange(ball, cell) {
-                            const isCellEmpty = cell.ball === null
-                            const range = isCellEmpty
-                                ? new Vector(ball.x, ball.y, cell.x, cell.y)
-                                      ._len
-                                : 1000 //(ball.radius * 2 + 1)
-                            return range
-                        }
-                        return getRange(ball, a) - getRange(ball, b)
-                    })[0]
-                this.ball.x = nearestEmptyCell.x
-                this.ball.y = nearestEmptyCell.y
-                this.ball.moveVector.len = 0
-                nearestEmptyCell.ball = ball
-
-                // change event
-                let nextEvent = new GameEvent.Aiming(this.game)
-                // nextEvent.ball = ball
-                this.game.currentEvent = nextEvent
+                cellForBall = theNearestEmptyCell
+            } else if (nearestFullCells.length > 0) {
+                // BAD! need to use the circle equation
+                // get the nearest empty cell between ball and the nearest full cell
+                const v = new Vector(
+                    theNearestFullCell.x,
+                    theNearestFullCell.y,
+                    ball.x,
+                    ball.y
+                )
+                v.len = v.len / 2
+                cellForBall = nearestEmptyCells.sort((a, b) => {
+                    return (
+                        new Vector(v.x, v.y, a.x, a.y)._len -
+                        new Vector(v.x, v.y, b.x, b.y)._len
+                    )
+                })[0]
+            } else {
+                return
             }
+
+            this.ball.x = cellForBall.x
+            this.ball.y = cellForBall.y
+            this.ball.moveVector.length = 0
+            cellForBall.ball = ball
+
+            // change event
+            let nextEvent = new GameEvent.Aiming(this.game)
+            // nextEvent.ball = ball
+            this.game.currentEvent = nextEvent
+
+            // function sortArrayByDistance(array){
+            //     return array().sort((a, b){
+            //         const ball = a.game.currentEvent.ball
+            //     })
+            // }
+
+            // const theNearestCell = null
+
+            // if (outLeft || outRight) {
+            //     this.ball.moveVector.reflectByX()
+            // } else if (outTop) {
+            //     // get the nearest empty cell
+            //     const nearestEmptyCell = this.game.grid.cells
+            //         .slice()
+            //         .sort(function (a, b) {
+            //             const ball = a.game.currentEvent.ball
+            //             function getRange(ball, cell) {
+            //                 const isCellEmpty = cell.ball === null
+            //                 const range = isCellEmpty
+            //                     ? new Vector(ball.x, ball.y, cell.x, cell.y)
+            //                           ._len
+            //                     : 1000 //(ball.radius * 2 + 1)
+            //                 return range
+            //             }
+            //             return getRange(ball, a) - getRange(ball, b)
+            //         })[0]
+            //     this.ball.x = nearestEmptyCell.x
+            //     this.ball.y = nearestEmptyCell.y
+            //     this.ball.moveVector.len = 0
+            //     nearestEmptyCell.ball = ball
+
+            //     // change event
+            //     let nextEvent = new GameEvent.Aiming(this.game)
+            //     // nextEvent.ball = ball
+            //     this.game.currentEvent = nextEvent
+            // }
         }
     }
 }
