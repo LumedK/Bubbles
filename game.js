@@ -162,7 +162,7 @@ class GameEvent {
             // )
 
             const nearestCells = grid.getCellsAround(
-                grid.sortCellByDistance(grid.sells, ball.x, ball.y, 0)
+                grid.sortCellByDistance(grid.cells, ball.x, ball.y, 1)[0]
             )
 
             const nearestFullCells = []
@@ -219,27 +219,48 @@ class GameEvent {
             const grid = this.game.grid
             const ball = this.ball
 
-            const surroundingCells = grid.getCellsAround(
-                grid.sortCellByDistance(grid.sells, ball.x, ball.y, 0)
-            )
-            const currentType = this.ball.type
-            let typeCount = 0
-            surroundingCells.forEach((cell) => {
-                if (cell.ball && cell.ball.type === currentType) {
-                    ++typeCount
+            const cell = grid.sortCellByDistance(
+                grid.sells,
+                ball.x,
+                ball.y,
+                1
+            )[0]
+            const linkedCells = new Set([cell]) // linked cells with same type of ball
+            const processedCells = new Set([cell])
+
+            function getLinkedCell(cell) {
+                const surroundingCells = grid.getCellsAround(cell)
+                for (let currentCell of surroundingCells) {
+                    if (processedCells.has(currentCell)) {
+                        continue
+                    }
+                    processedCells.add(currentCell)
+                    if (
+                        currentCell.ball &&
+                        currentCell.ball.type === ball.type
+                    ) {
+                        linkedCells.add(currentCell)
+                        getLinkedCell(currentCell)
+                    }
                 }
-            })
-            // Wrong! use recursion to get linked cell
-            const doPopping = typeCount >= 3
+            }
+
+            getLinkedCell(cell) // fill the "linkedCells" list
+            const doPopping = linkedCells.size >= 3
             if (doPopping) {
-                console.log('DO POPPING')
+                const ballToPop = new Set()
+                linkedCells.forEach((cell) => {
+                    ballToPop.add(cell.ball)
+                })
+                // rework! Need to destruct ball
+                this.game.objects = this.game.objects.filter((object) => {
+                    return !ballToPop.has(object)
+                })
             }
 
             // change event
             this.game.currentEvent = new GameEvent.Aiming(this.game)
 
-            // check 3 of one type
-            // pop it
             // check the binding to the ceiling
             // pop it
         }
@@ -306,6 +327,11 @@ class GameObject {
             this.checkRadius = this.radius * 1.65 // should be between radius and 2 * radius
             this.type = GameObject.Ball.getTypeNumber(typeNumber)
         }
+
+        // destructor(){
+        //     this = null
+        // }
+
         static getTypeNumber(typeNumber) {
             const possibleColor = ['red', 'green', 'blue', 'purple', 'orange']
             let index = typeNumber
@@ -356,7 +382,6 @@ class GameObject {
             }
             return cells
         }
-        s
 
         draw() {
             super.draw()
@@ -371,16 +396,22 @@ class GameObject {
         }
 
         sortCellByDistance(array, x, y, len = 0) {
-            //! rework. Need to filter(not more than 2R) before sorting
             const point = { x: x, y: y }
+            const r = GameObject.Ball.radius
             function getRange(cell) {
                 return new Vector(point.x, point.y, cell.x, cell.y)._len
             }
             const theNearestCell = this.cells
-                .slice() // making copy
+                .filter((cell) => {
+                    return (
+                        Math.abs(point.x - cell.x) <= 4 * r &&
+                        Math.abs(point.y - cell.y) <= 4 * r
+                    )
+                })
                 .sort((a, b) => {
                     return getRange(a) - getRange(b)
-                })[len]
+                })
+                .slice(0, len)
             return theNearestCell
         }
 
@@ -391,7 +422,7 @@ class GameObject {
         }
 
         getCellsAround(cell) {
-            const cells = cell.grid.cells
+            // const cells = cell.grid.cellsvv
             const row = cell.row
             const col = cell.col
             const cellsAround = []
