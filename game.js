@@ -97,42 +97,45 @@ class GameEvent {
     do() {}
 
     static Aiming = class extends GameEvent {
+        constructor(game) {
+            super(game)
+            this.ball = new GameObject.Ball(game)
+            this.game.objects.push(this.ball)
+        }
         do() {
-            console.log('game event: aiming')
+            super.do()
 
             const field = this.game.field
             const wasClick = field.clickX > -1 || field.clickY > -1
-            if (!wasClick) {
-                return
+            if (wasClick) {
+                // prepare ball
+                const ball = this.ball
+                const moveVector = new Vector(
+                    field.aimX,
+                    field.aimY,
+                    field.clickX,
+                    field.clickY
+                )
+                moveVector.len = ball.speed
+                ball.moveVector = moveVector
+
+                // field changing
+                field.clickX = -1
+                field.clickY = -1
+
+                // change event
+                this.game.currentEvent = new GameEvent.CheckCollision(
+                    this.game,
+                    ball
+                )
             }
-            // prepare ball
-            let ball = new GameObject.Ball()
-            let moveVector = new Vector(
-                field.aimX,
-                field.aimY,
-                field.clickX,
-                field.clickY
-            )
-            moveVector.len = ball.speed
-            ball.moveVector = moveVector
-
-            this.game.objects.push(ball)
-            // this.game.currentBall = ball
-
-            field.clickX = -1
-            field.clickY = -1
-
-            // change event
-            let nextEvent = new GameEvent.CheckCollision(this.game)
-            nextEvent.ball = ball
-            this.game.currentEvent = nextEvent
         }
     }
 
     static CheckCollision = class extends GameEvent {
-        constructor(game) {
+        constructor(game, ball) {
             super(game)
-            this.ball = null
+            this.ball = ball
         }
         do() {
             super.do()
@@ -145,20 +148,18 @@ class GameEvent {
             ball.y = moveVector._yEnd
 
             // check collisions
+            //! NEED TO REWORK FOR MORE PERFORMANCE
             const outLeft = ball.x - ball.radius <= 0
             const outRight =
                 ball.x + ball.radius >= this.game.field.canvas.width
             const outTop = ball.y - ball.radius <= 0
-            const nearestCells = this.game.grid.cells
-                .slice()
-                .sort(function (a, b) {
-                    const ball = a.game.currentEvent.ball
-                    function getRange(ball, cell) {
-                        return new Vector(ball.x, ball.y, cell.x, cell.y)._len
-                    }
-                    return getRange(ball, a) - getRange(ball, b)
-                })
-                .slice(0, 6)
+
+            // const nearestCells = this.game.grid.getNearestCells(ball.x, ball.y)
+            const grid = this.game.grid
+            const nearestCells = grid.getCellsAround(
+                grid.getTheNearestCell(ball.x, ball.y)
+            )
+
             const nearestFullCells = []
             const nearestEmptyCells = []
             nearestCells.forEach((cell) => {
@@ -169,8 +170,6 @@ class GameEvent {
                     nearestFullCells.push(cell)
                 }
             })
-            const theNearestFullCell =
-                nearestFullCells.length > 0 ? nearestFullCells[0] : null
             const theNearestEmptyCell =
                 nearestEmptyCells.length > 0 ? nearestEmptyCells[0] : null
 
@@ -181,25 +180,20 @@ class GameEvent {
             } else if (outTop) {
                 cellForBall = theNearestEmptyCell
             } else if (nearestFullCells.length > 0) {
-                // BAD! need to use the circle equation
-                // get the nearest empty cell between ball and the nearest full cell
-                const v = new Vector(
-                    theNearestFullCell.x,
-                    theNearestFullCell.y,
-                    ball.x,
-                    ball.y
+                const fullCellsInRange = nearestFullCells.filter(
+                    (cell) =>
+                        (cell.x - ball.x) ** 2 +
+                            (cell.y - ball.y) ** 2 -
+                            ball.checkRadius ** 2 <=
+                        0
                 )
-                v.len = v.len / 2
-                cellForBall = nearestEmptyCells.sort((a, b) => {
-                    return (
-                        new Vector(v.x, v.y, a.x, a.y)._len -
-                        new Vector(v.x, v.y, b.x, b.y)._len
-                    )
-                })[0]
+                if (fullCellsInRange.length === 0) {
+                    return
+                }
+                cellForBall = theNearestEmptyCell
             } else {
                 return
             }
-
             this.ball.x = cellForBall.x
             this.ball.y = cellForBall.y
             this.ball.moveVector.length = 0
@@ -207,45 +201,24 @@ class GameEvent {
 
             // change event
             let nextEvent = new GameEvent.Aiming(this.game)
+
             // nextEvent.ball = ball
             this.game.currentEvent = nextEvent
+        }
+    }
 
-            // function sortArrayByDistance(array){
-            //     return array().sort((a, b){
-            //         const ball = a.game.currentEvent.ball
-            //     })
-            // }
-
-            // const theNearestCell = null
-
-            // if (outLeft || outRight) {
-            //     this.ball.moveVector.reflectByX()
-            // } else if (outTop) {
-            //     // get the nearest empty cell
-            //     const nearestEmptyCell = this.game.grid.cells
-            //         .slice()
-            //         .sort(function (a, b) {
-            //             const ball = a.game.currentEvent.ball
-            //             function getRange(ball, cell) {
-            //                 const isCellEmpty = cell.ball === null
-            //                 const range = isCellEmpty
-            //                     ? new Vector(ball.x, ball.y, cell.x, cell.y)
-            //                           ._len
-            //                     : 1000 //(ball.radius * 2 + 1)
-            //                 return range
-            //             }
-            //             return getRange(ball, a) - getRange(ball, b)
-            //         })[0]
-            //     this.ball.x = nearestEmptyCell.x
-            //     this.ball.y = nearestEmptyCell.y
-            //     this.ball.moveVector.len = 0
-            //     nearestEmptyCell.ball = ball
-
-            //     // change event
-            //     let nextEvent = new GameEvent.Aiming(this.game)
-            //     // nextEvent.ball = ball
-            //     this.game.currentEvent = nextEvent
-            // }
+    static Popping = class extends GameEvent {
+        constructor(game, ball) {
+            super(game)
+            this.ball = null
+        }
+        do() {
+            super.do()
+            // get around
+            // check 3 of one type
+            // pop it
+            // check the binding to the ceiling
+            // pop it
         }
     }
 }
@@ -300,19 +273,31 @@ class GameObject {
 
     static Ball = class extends GameObject {
         static radius = 12
-        constructor() {
+        constructor(game, typeNumber = 0) {
             super(game)
             this.x = game.field.aimX
             this.y = game.field.aimY
-            this.radius = 12
+            this.radius = GameObject.Ball.radius
             this.moveVector = null
             this.speed = 5
+            this.checkRadius = this.radius * 1.65 // should be between radius and 2 * radius
+            this.type = GameObject.Ball.getTypeNumber(typeNumber)
+        }
+        static getTypeNumber(typeNumber) {
+            const possibleColor = ['red', 'green', 'blue', 'purple', 'orange']
+            let index = typeNumber
+            if (0 >= typeNumber < possibleColor.length) {
+                const min = 0
+                const max = possibleColor.length - 1
+                index = Math.floor(Math.random() * (max - min + 1)) + min
+            }
+            return { type: index, color: possibleColor[index] }
         }
         draw() {
             super.draw()
             const ctx = this.field.ctx
 
-            ctx.fillStyle = 'green'
+            ctx.fillStyle = this.type.color
             ctx.beginPath()
             ctx.arc(this.x, this.y, this.radius, 0, 2 * Math.PI)
             ctx.fill()
@@ -322,7 +307,11 @@ class GameObject {
     static Grid = class extends GameObject {
         constructor(game) {
             super(game)
-            this.cells = []
+            this.cells = GameObject.Grid.initCells(this)
+        }
+
+        static initCells(grid) {
+            const cells = []
             const distance = GameObject.Ball.radius * 2
             let yShift = distance / 2
             for (let row = 0; row < 20; row++) {
@@ -331,19 +320,20 @@ class GameObject {
                     if (col * distance + xShift === 0) {
                         continue
                     }
-
                     const cell = new GameObject.Cell(
-                        game, // game
-                        this, // grid
+                        grid.game, // game
+                        grid, // grid
                         col * distance + xShift, // x
                         row * distance + yShift, // y
                         row, // row
                         col // column
                     )
-                    this.cells.push(cell)
+                    cells.push(cell)
                 }
             }
+            return cells
         }
+
         draw() {
             super.draw()
             const ctx = this.game.field.ctx
@@ -354,6 +344,42 @@ class GameObject {
                 ctx.arc(point.x, point.y, 1, 0, 2 * Math.PI)
                 ctx.fill()
             })
+        }
+
+        getTheNearestCell(x, y) {
+            const point = { x: x, y: y }
+            function getRange(cell) {
+                return new Vector(point.x, point.y, cell.x, cell.y)._len
+            }
+            const theNearestCell = this.cells
+                .slice() // making copy
+                .sort((a, b) => {
+                    return getRange(a) - getRange(b)
+                })[0]
+            return theNearestCell
+        }
+
+        getCellByPosition(row, col) {
+            return this.cells.find((cell) => {
+                return cell.row === row && cell.col === col
+            })
+        }
+
+        getCellsAround(cell) {
+            const cells = cell.grid.cells
+            const row = cell.row
+            const col = cell.col
+            const cellsAround = []
+            cellsAround.push(this.getCellByPosition(row, --col)) // left cell
+            cellsAround.push(this.getCellByPosition(row, ++col)) // right cell
+            cellsAround.push(this.getCellByPosition(++row, col)) // top cell
+            cellsAround.push(this.getCellByPosition(--row, col)) // bottom cell
+            const shift = row % 2 === 0 ? 1 : -1
+            cellsAround.push(this.getCellByPosition(++row, col + shift)) // top shift cell
+            cellsAround.push(this.getCellByPosition(--row, col + shift)) // bottom shift cell
+            return cells.filter((cell) => {
+                return (cell = true)
+            }) // delete undefined
         }
     }
 
