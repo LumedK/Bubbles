@@ -248,14 +248,22 @@ class GameEvent {
             getLinkedCell(cell) // fill the "linkedCells" list
             const doPopping = linkedCells.size >= 3
             if (doPopping) {
-                const ballToPop = new Set()
-                linkedCells.forEach((cell) => {
-                    ballToPop.add(cell.ball)
-                })
-                // rework! Need to destruct ball
-                this.game.objects = this.game.objects.filter((object) => {
-                    return !ballToPop.has(object)
-                })
+                function deleteBalls(game, cells) {
+                    const ballsToDel = new Set(
+                        [...cells].map((cell) => cell.ball)
+                    )
+                    game.objects.slice().forEach((elem, index) => {
+                        if (ballsToDel.has(elem)) {
+                            game.objects.splice(index, 1)
+                        }
+                        ;[...cells].forEach((cell) => {
+                            cell.ball = null
+                        })
+                    })
+                }
+
+                // BUG not all ball have been deleted
+                deleteBalls(this.game, linkedCells)
             }
 
             // change event
