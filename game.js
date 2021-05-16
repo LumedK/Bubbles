@@ -88,6 +88,14 @@ class Game {
             this.stop()
         }
     }
+
+    deleteBalls(cells) {
+        const ballsToDel = new Set([...cells].map((cell) => cell.ball))
+        this.objects = this.objects.filter((obj) => !ballsToDel.has(obj))
+        Array.from(cells).forEach((cell) => {
+            cell.ball = null
+        })
+    }
 }
 
 class GameEvent {
@@ -205,92 +213,93 @@ class GameEvent {
             cellForBall.ball = ball
 
             // change event
-            this.game.currentEvent = new GameEvent.Popping(this.game, ball)
+            this.game.currentEvent = new GameEvent.PopSameLinkedBall(
+                this.game,
+                cellForBall
+            )
         }
     }
 
-    static Popping = class extends GameEvent {
-        constructor(game, ball) {
+    static PopSameLinkedBall = class extends GameEvent {
+        constructor(game, cell) {
             super(game)
-            this.ball = ball
+            this.cell = cell
         }
         do() {
             super.do()
-            const grid = this.game.grid
-            const ball = this.ball
-
-            const cell = grid.sortCellByDistance(
-                grid.sells,
-                ball.x,
-                ball.y,
-                1
-            )[0]
-
-            function getLinkedCell(
-                cell,
-                linkedCells = new Set([cell]),
-                processedCells = new Set([cell])
-            ) {
-                const surroundingCells = grid.getCellsAround(cell)
-                for (let currentCell of surroundingCells) {
-                    if (processedCells.has(currentCell)) {
-                        continue
-                    }
-                    processedCells.add(currentCell)
-                    if (
-                        currentCell.ball &&
-                        currentCell.ball.type.typeNumber ===
-                            ball.type.typeNumber
-                    ) {
-                        linkedCells.add(currentCell)
-                        getLinkedCell(currentCell, linkedCells, processedCells)
-                    }
-                }
-                return linkedCells
-            }
-
-            function deleteBalls(game, cells) {
-                const ballsToDel = new Set([...cells].map((cell) => cell.ball))
-                game.objects = game.objects.filter(
-                    (obj) => !ballsToDel.has(obj)
-                )
-                Array.from(cells).forEach((cell) => {
-                    cell.ball = null
-                })
-            }
-
-            function getLinkedToCeilingCells(
-                ceilingCells = new Set(
-                    grid.cells.filter((cell) => cell.row === 0 && cell.ball) // fill first row
-                ),
-                processedCells = new Set()
-            ) {
-                const surroundingCells = grid.getCellsAround(cell)
-                for (let cell of surroundingCells) {
-                    if (!ceilingCells.has(cell) && cell.ball) {
-                        ceilingCells.add(cell)
-                        getLinkedToCeilingCells(ceilingCells, processedCells)
-                    }
-                }
-                return ceilingCells
-            }
-
-            const linkedCells = getLinkedCell(cell) // fill the "linkedCells" list
-            const doPopping = linkedCells.size >= 3
-            if (doPopping) {
-                deleteBalls(this.game, linkedCells)
-                const LinkedToCeiling = getLinkedToCeilingCells()
-                deleteBalls(
-                    this.game,
-                    grid.cells.filter((cell) => !LinkedToCeiling.has(cell))
-                )
+            const LinkedCell = this.getLinkedCell()
+            if (LinkedCell.size >= 3) {
+                this.game.deleteBalls(LinkedCell)
             }
 
             // change event
-            this.game.currentEvent = new GameEvent.Aiming(this.game)
+            this.game.currentEvent = new GameEvent.PopFreeBall(
+                this.game,
+                this.cell
+            )
+        }
 
-            // check the binding to the ceiling
-            // pop it
+        getLinkedCell(
+            cell = this.cell,
+            linkedCells = new Set([cell]),
+            processedCells = new Set([cell])
+        ) {
+            const surroundingCells = cell.grid.getCellsAround(cell)
+            for (let currentCell of surroundingCells) {
+                if (processedCells.has(currentCell)) {
+                    continue
+                }
+                processedCells.add(currentCell)
+                if (
+                    currentCell.ball &&
+                    currentCell.ball.type.typeNumber ===
+                        this.cell.ball.type.typeNumber
+                ) {
+                    linkedCells.add(currentCell)
+                    this.getLinkedCell(currentCell, linkedCells, processedCells)
+                }
+            }
+            return linkedCells
+        }
+    }
+
+    static PopFreeBall = class extends GameEvent {
+        constructor(game, cell) {
+            super(game)
+            this.cell = cell
+        }
+        do() {
+            super.do()
+            const LinkedCell = this.getLinkedCell()
+            const freeBallCells = this.game.grid.cells.filter((cell) => {
+                return cell.ball && !LinkedCell.has(cell)
+            })
+            this.game.deleteBalls(freeBallCells)
+
+            // change event
+            this.game.currentEvent = new GameEvent.Aiming(this.game)
+        }
+
+        getLinkedCell(
+            cells = this.cell.grid.cells.filter((cell) => {
+                return cell.row === 0 && cell.ball
+            }),
+            linkedCells = new Set(cells),
+            processedCells = new Set()
+        ) {
+            cells.forEach((cell) => {
+                if (!processedCells.has(cell) && cell.ball) {
+                    linkedCells.add(cell)
+                    processedCells.add(cell)
+                    const surroundingCells = cell.grid.getCellsAround(cell)
+                    this.getLinkedCell(
+                        surroundingCells,
+                        linkedCells,
+                        processedCells
+                    )
+                }
+            })
+            return linkedCells
         }
     }
 }
@@ -364,6 +373,7 @@ class GameObject {
             }
             return { typeNumber: typeNumber, color: possibleColor[typeNumber] }
         }
+
         draw() {
             super.draw()
             const ctx = this.field.ctx
@@ -507,252 +517,36 @@ class Vector {
     }
 }
 
-game = new Game(new Field())
+const game = new Game(new Field())
+
+// //debug
+// game.currentEvent = new GameEvent.Aiming(game)
+// game.currentEvent.ball.type = GameObject.Ball.getTypeNumber(3)
+
+// let cell = null
+
+// cell = game.grid.getCellByPosition(0, 1)
+// cell.ball = new GameObject.Ball(game, 1)
+// cell.ball.x = cell.x
+// cell.ball.y = cell.y
+// game.objects.push(cell.ball)
+
+// cell = game.grid.getCellByPosition(0, 2)
+// cell.ball = new GameObject.Ball(game, 1)
+// cell.ball.x = cell.x
+// cell.ball.y = cell.y
+// game.objects.push(cell.ball)
+
+// cell = game.grid.getCellByPosition(0, 10)
+// cell.ball = new GameObject.Ball(game, 1)
+// cell.ball.x = cell.x
+// cell.ball.y = cell.y
+// game.objects.push(cell.ball)
+
+// cell = game.grid.getCellByPosition(1, 0)
+// cell.ball = new GameObject.Ball(game, 3)
+// cell.ball.x = cell.x
+// cell.ball.y = cell.y
+// game.objects.push(cell.ball)
+
 game.start()
-
-// drawCells()
-
-// // radius
-
-// function drawCells() {
-//     const cells = []
-//     const distance = 12 * 2
-//     let yShift = distance / 2
-//     for (let row = 0; row < 20; row++) {
-//         const xShift = (distance / 2) * ((row + 1) % 2)
-//         for (let col = 0; col < 20; col++) {
-//             if (col * distance + xShift === 0) {
-//                 continue
-//             }
-//             const point = {
-//                 x: col * distance + xShift,
-//                 y: row * distance + yShift,
-//                 row: row,
-//                 col: col
-//             }
-//             cells.push(point)
-//         }
-//     }
-//     //draw
-//     const field = new Field()
-//     const ctx = field.ctx
-
-//     cells.forEach((point) => {
-//         ctx.fillStyle = 'yellow'
-//         ctx.beginPath()
-//         ctx.arc(point.x, point.y, 1, 0, 2 * Math.PI)
-//         ctx.fill()
-//     })
-
-//     console.trace(cells)
-// }
-
-// global
-// const canvas = document.getElementById('gameField')
-// const ctx = canvas.getContext('2d')
-// let cursorX = 0
-// let cursorY = 0
-// let clickX = 0
-// let clickY = 0
-
-// class GameEvent {
-//     do() {}
-// }
-
-// class EventAiming extends GameEvent {
-//     do() {
-//         console.log('game event: aiming')
-//     }
-// }
-
-// let game = {
-//     maxFps: 30,
-//     interval: null,
-//     currentEvent: new EventAiming(),
-
-//     start() {
-//         canvas.width = 504
-//         canvas.height = canvas.offsetHeight
-
-//         canvas.addEventListener('mousemove', (event) => {
-//             cursorX = event.layerX
-//             cursorY = event.layerY
-//         })
-
-//         canvas.addEventListener('click', (event) => {
-//             clickX = event.layerX
-//             clickY = event.layerY
-//             newClick = true
-//         })
-//         this.interval = setInterval(this.main.bind(this), 1000 / this.maxFps)
-//         console.log('game started')
-//     },
-
-//     stop() {
-//         if (this.interval) {
-//             clearInterval(this.interval)
-//             console.log('game stopped')
-//         }
-//     },
-
-//     main() {
-//         try {
-//             this.currentEvent.do()
-//         } catch (error) {
-//             console.log(error)
-//             this.stop()
-//         }
-//     }
-// }
-
-// game.start()
-// console.trace(Aiming)
-
-// // init setting
-// const canvas = document.getElementById('gameField')
-// const ctx = canvas.getContext('2d')
-// let cursorX = 0
-// let cursorY = 0
-// let newClick = false
-// let clickX = 0
-// let clickY = 0s
-// const basicSpeedXY = 1
-// const aimLength = 100
-
-// function init() {
-//     canvas.width = 504
-//     canvas.height = canvas.offsetHeight
-
-//     canvas.addEventListener('mousemove', (event) => {
-//         cursorX = event.layerX
-//         cursorY = event.layerY
-//     })
-
-//     canvas.addEventListener('click', (event) => {
-//         clickX = event.layerX
-//         clickY = event.layerY
-//         newClick = true
-//     })
-// }
-
-// class Common {
-//     static getBasicVector(length) {
-//         const x0 = canvas.height / 2
-//         const y0 = canvas.width
-//         const cx = cursorX
-//         const cy = cursorY
-
-//         const a = x0 - cx
-//         const b = y0 - cy
-//         const c = Math.sqrt(a ** 2 + b ** 2)
-//         const k = length / c
-//         const va = k * a
-//         const vb = k * b
-//         const x = x0 - va
-//         const y = y0 - vb
-//         return { x: x, y: y }
-//     }
-// }
-
-// class Items {
-//     constructor(x, y) {
-//         this.isRender = true
-//         this.x
-//         this.y
-//     }
-//     draw() {}
-// }
-
-// class Ball extends Items {
-//     constructor() {
-//         this.radius = 12
-//         // this.x = canvas.width / 2
-//         // this.y = canvas.height
-//         this.color = 'green'
-//         this.moveX = 0
-//         this.moveY = 0
-//     }
-//     draw() {
-//         console.log(`x(${this.x}) y(${this.y})`)
-//         console.log(`move: x(${this.moveX}) y(${this.moveY})`)
-//         // move the ball
-//         this.x += this.moveX
-//         this.y += this.moveY
-
-//         ctx.fillStyle = 'green'
-//         ctx.beginPath()
-//         ctx.arc(this.x, this.y, this.radius, 0, 2 * Math.PI)
-//         ctx.fill()
-//     }
-//     pull() {
-//         const { x, y } = Common.getBasicVector(basicSpeedXY)
-//         this.moveX = -1
-//         this.moveY = -1
-//     }
-// }
-
-// const GameEvents = {
-//     aiming: 'aiming',
-//     flight: 'flight',
-//     popping: 'popping',
-//     gameOver: 'gameOver'
-// }
-
-// let game = {
-//     interval: null,
-//     currentEvent: GameEvents.aiming,
-//     items: [],
-
-//     drawAimingLine() {
-//         const { x: aimX, y: aimY } = Common.getBasicVector(aimLength)
-
-//         const x1 = canvas.height / 2
-//         const y1 = canvas.width
-//         const x2 = cursorX
-//         const y2 = cursorY
-
-//         dx = (y1 / (y1 - y2)) * (x2 - x1)
-//         endX = x1 + dx
-//         endY = 0
-
-//         ctx.strokeStyle = 'red'
-//         ctx.beginPath()
-//         ctx.moveTo(aimX, aimY)
-//         ctx.lineTo(endX, endY)
-//         ctx.stroke()
-
-//         ctx.strokeStyle = 'white'
-//         ctx.beginPath()
-//         ctx.moveTo(canvas.width / 2, canvas.height)
-//         ctx.lineTo(aimX, aimY)
-//         ctx.stroke()
-//     },
-
-//     gameLoop() {
-//         this.gameLogic()
-//         this.render()
-//     },
-
-//     gameLogic() {
-//         ctx.clearRect(0, 0, canvas.width, canvas.height)
-
-//         if (this.currentEvent === GameEvents.aiming && newClick) {
-//             this.currentEvent = GameEvents.flight
-//             const currentBall = new Ball()
-//             this.items.push(currentBall)
-//             currentBall.pull()
-//             // clearInterval(this.interval)
-//         }
-//     },
-
-//     render() {
-//         ctx.clearRect(0, 0, canvas.width, canvas.height)
-//         this.drawAimingLine()
-//         this.items.forEach((item) => {
-//             item.draw()
-//         })
-//     }
-// }
-
-// init()
-// game.interval = setInterval(game.gameLoop.bind(game), 1000 / 2)
