@@ -61,14 +61,19 @@ class Game {
         field.game = this
         this.interval = null
         this.maxFps = 60
-        this.currentEvent = new GameEvent(this)
-        this.grid = new GameObject.Grid(this)
+        // this.currentEvent = new GameEvent(this)
+        this.currentEvent = new GameEvent.AddBallLine(this, 1)
         this.objects = []
-        this.objects.push(this.grid)
-        this.objects.push(new GameObject.AimingLine(this))
+        this.grid = new GameObject.Grid(this)
+        this.grid.addToGameObjects()
+        new GameObject.AimingLine(this).addToGameObjects()
+        // this.objects.push(this.grid)
+        // this.objects.push(new GameObject.AimingLine(this))
+        this.lives = { max: 1, current: 1 }
     }
     start() {
-        this.currentEvent = new GameEvent.Aiming(this)
+        // this.currentEvent = new GameEvent.Aiming(this)
+        // this.currentEvent = new GameEvent.AddBallLine(this, 10)
         this.interval = setInterval(this.main.bind(this), 1000 / this.maxFps)
         console.log('game started')
     }
@@ -230,13 +235,12 @@ class GameEvent {
             const LinkedCell = this.getLinkedCell()
             if (LinkedCell.size >= 3) {
                 this.game.deleteBalls(LinkedCell)
+            } else {
+                --this.game.lives.current
             }
 
             // change event
-            this.game.currentEvent = new GameEvent.PopFreeBall(
-                this.game,
-                this.cell
-            )
+            this.game.currentEvent = new GameEvent.PopFreeBall(this.game)
         }
 
         getLinkedCell(
@@ -264,9 +268,8 @@ class GameEvent {
     }
 
     static PopFreeBall = class extends GameEvent {
-        constructor(game, cell) {
+        constructor(game) {
             super(game)
-            this.cell = cell
         }
         do() {
             super.do()
@@ -277,11 +280,11 @@ class GameEvent {
             this.game.deleteBalls(freeBallCells)
 
             // change event
-            this.game.currentEvent = new GameEvent.Aiming(this.game)
+            this.game.currentEvent = new GameEvent.AddBallLine(this.game)
         }
 
         getLinkedCell(
-            cells = this.cell.grid.cells.filter((cell) => {
+            cells = this.game.grid.cells.filter((cell) => {
                 return cell.row === 0 && cell.ball
             }),
             linkedCells = new Set(cells),
@@ -302,6 +305,52 @@ class GameEvent {
             return linkedCells
         }
     }
+
+    static AddBallLine = class extends GameEvent {
+        constructor(game, numberLines = null) {
+            super(game)
+            this.numberLines = numberLines
+        }
+        do() {
+            const lives = this.game.lives
+            if (lives.current > 0 && this.numberLines == null) {
+                this.game.currentEvent = new GameEvent.Aiming(this.game)
+                return
+            }
+            // add lines of balls
+            const grid = this.game.grid
+            this.numberLines =
+                this.numberLines === null ? lives.max : this.numberLines
+
+            // BUG wrong move lines
+            grid.cells
+                .slice()
+                .reverse()
+                .forEach((cell) => {
+                    // move balls
+                    const replacingCell =
+                        cell.ball == true
+                            ? grid.getCellByPosition(
+                                  cell.row + this.numberLines,
+                                  cell.col
+                              )
+                            : false
+                    if (replacingCell) {
+                        replacingCell.ball = cell.ball
+                    }
+                    // add new line of balls
+                    if (cell.row <= this.numberLines) {
+                        cell.ball = new GameObject.Ball(this.game)
+                        cell.ball.addToGameObjects()
+                    }
+                })
+
+            // refresh lives
+            let nextMaxLives = lives.max === 4 ? 1 : --lives.max
+
+            this.game.currentEvent = new GameEvent.PopFreeBall(this.game)
+        }
+    }
 }
 
 class GameObject {
@@ -314,6 +363,10 @@ class GameObject {
     }
     draw() {
         // console.log('draw an obj')
+    }
+
+    addToGameObjects() {
+        this.game.objects.push(this)
     }
 
     static AimingLine = class extends GameObject {
@@ -479,7 +532,17 @@ class GameObject {
             this.y = y
             this.row = row
             this.col = column
-            this.ball = null
+            this._ball = null
+        }
+        set ball(ball) {
+            if (ball instanceof GameObject.Ball) {
+                ball.x = this.x
+                ball.y = this.y
+            }
+            this._ball = ball
+        }
+        get ball() {
+            return this._ball
         }
     }
 }
