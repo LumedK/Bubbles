@@ -15,8 +15,8 @@ class Field {
     setup() {
         let canvas = this.canvas
 
-        canvas.width = 480
-        canvas.height = canvas.offsetHeight
+        canvas.width = 468
+        canvas.height = 480
 
         this.aimX = this.canvas.width / 2
         this.aimY = this.canvas.height
@@ -61,19 +61,17 @@ class Game {
         field.game = this
         this.interval = null
         this.maxFps = 60
-        // this.currentEvent = new GameEvent(this)
-        this.currentEvent = new GameEvent.AddBallLine(this, 1)
+
         this.objects = []
         this.grid = new GameObject.Grid(this)
         this.grid.addToGameObjects()
         new GameObject.AimingLine(this).addToGameObjects()
-        // this.objects.push(this.grid)
-        // this.objects.push(new GameObject.AimingLine(this))
+
         this.lives = { max: 1, current: 1 }
+        this.currentEvent = new GameEvent.AddBallLine(this)
+        this.currentEvent.addLinesOfBall()
     }
     start() {
-        // this.currentEvent = new GameEvent.Aiming(this)
-        // this.currentEvent = new GameEvent.AddBallLine(this, 10)
         this.interval = setInterval(this.main.bind(this), 1000 / this.maxFps)
         console.log('game started')
     }
@@ -154,74 +152,91 @@ class GameEvent {
         do() {
             super.do()
             // move the ball
-            let ball = this.ball
-            let moveVector = ball.moveVector
+            const ball = this.ball
+            const moveVector = ball.moveVector
             moveVector.xStart = moveVector._xEnd
             moveVector.yStart = moveVector._yEnd
             ball.x = moveVector._xEnd
             ball.y = moveVector._yEnd
 
-            // check collisions
-            //! NEED TO REWORK FOR MORE PERFORMANCE
-            const outLeft = ball.x - ball.radius <= 0
-            const outRight =
-                ball.x + ball.radius >= this.game.field.canvas.width
-            const outTop = ball.y - ball.radius <= 0
+            const collision = this.getCollision()
 
-            // const nearestCells = this.game.grid.getNearestCells(ball.x, ball.y)
-            const grid = this.game.grid
-            // const nearestCells = grid.getCellsAround(
-            //     grid.getTheNearestCell(ball.x, ball.y)
-            // )
-
-            const nearestCells = grid.getCellsAround(
-                grid.sortCellByDistance(grid.cells, ball.x, ball.y, 1)[0]
-            )
-
-            const nearestFullCells = []
-            const nearestEmptyCells = []
-            nearestCells.forEach((cell) => {
-                const isEmptyCell = cell.ball === null
-                if (isEmptyCell) {
-                    nearestEmptyCells.push(cell)
-                } else {
-                    nearestFullCells.push(cell)
-                }
-            })
-            const theNearestEmptyCell =
-                nearestEmptyCells.length > 0 ? nearestEmptyCells[0] : null
-
-            let cellForBall = null
-            if (outLeft || outRight) {
+            if (!collision.type) {
+                return
+            } else if (collision.type === 'side') {
                 this.ball.moveVector.reflectByX()
                 return
-            } else if (outTop) {
-                cellForBall = theNearestEmptyCell
-            } else if (nearestFullCells.length > 0) {
-                const fullCellsInRange = nearestFullCells.filter(
-                    (cell) =>
-                        (cell.x - ball.x) ** 2 +
-                            (cell.y - ball.y) ** 2 -
-                            ball.checkRadius ** 2 <=
-                        0
-                )
-                if (fullCellsInRange.length === 0) {
-                    return
-                }
-                cellForBall = theNearestEmptyCell
-            } else {
-                return
-            }
-            this.ball.x = cellForBall.x
-            this.ball.y = cellForBall.y
-            this.ball.moveVector.length = 0
-            cellForBall.ball = ball
+            } else if (new Set(['top', 'ball']).has(collision.type)) {
+                const cellForBall = collision.nearestEmptyCell
+                ball.moveVector.length = 0
+                cellForBall.ball = ball
 
-            // change event
-            this.game.currentEvent = new GameEvent.PopSameLinkedBall(
-                this.game,
-                cellForBall
-            )
+                this.game.currentEvent = new GameEvent.PopSameLinkedBall(
+                    this.game,
+                    cellForBall
+                )
+            }
+        }
+
+        getCollision() {
+            const grid = this.game.grid
+            const ball = this.ball
+            const nearestCell = grid.sortCellByDistance(
+                grid.cells,
+                ball.x,
+                ball.y
+            )[0]
+
+            const cellsAround = grid.getCellsAround(nearestCell)
+            const fillAround = []
+            const emptyAround = []
+            cellsAround.forEach((cell) => {
+                if (cell.ball) {
+                    fillAround.push(cell)
+                } else {
+                    emptyAround.push(cell)
+                }
+            })
+            const nearestEmptyCell = grid.sortCellByDistance(
+                emptyAround,
+                ball.x,
+                ball.y
+            )[0]
+
+            const collision = {
+                nearestEmptyCell: nearestEmptyCell,
+                type: null
+            }
+
+            if (ball.y - ball.radius <= 0) {
+                collision.type = 'top'
+                return collision
+            }
+            if (
+                ball.x - ball.radius <= 0 ||
+                ball.x + ball.radius >= this.game.field.canvas.width
+            ) {
+                collision.type = 'side'
+                return collision
+            }
+            if (fillAround.length === 0) {
+                collision.type = null
+                return collision
+            }
+            const isFillCellInRange = fillAround.find((cell) => {
+                const checkRange =
+                    (cell.x - ball.x) ** 2 +
+                    (cell.y - ball.y) ** 2 -
+                    ball.checkRadius ** 2
+                return checkRange <= 0
+            })
+            if (isFillCellInRange) {
+                collision.type = 'ball'
+                return collision
+            } else {
+                collision.type = null
+                return collision
+            }
         }
     }
 
@@ -280,7 +295,7 @@ class GameEvent {
             this.game.deleteBalls(freeBallCells)
 
             // change event
-            this.game.currentEvent = new GameEvent.AddBallLine(this.game)
+            this.game.currentEvent = new GameEvent.CheckGameStatus(this.game)
         }
 
         getLinkedCell(
@@ -306,49 +321,71 @@ class GameEvent {
         }
     }
 
-    static AddBallLine = class extends GameEvent {
-        constructor(game, numberLines = null) {
+    static CheckGameStatus = class extends GameEvent {
+        constructor(game) {
             super(game)
-            this.numberLines = numberLines
+        }
+        do() {
+            const grid = this.game.grid
+            const gameOver =
+                grid.cells.find((cell) => {
+                    return cell.row === 18 && cell.ball
+                }) != undefined
+            const win =
+                grid.cells.find((cell) => {
+                    return cell.row === 0 && cell.ball
+                }) === undefined
+
+            if (gameOver || win) {
+                alert(gameOver ? 'Game Over' : 'You WIN!!!')
+                this.game.stop()
+            } else {
+                this.game.currentEvent = new GameEvent.AddBallLine(this.game)
+            }
+        }
+    }
+
+    static AddBallLine = class extends GameEvent {
+        constructor(game) {
+            super(game)
         }
         do() {
             const lives = this.game.lives
-            if (lives.current > 0 && this.numberLines == null) {
-                this.game.currentEvent = new GameEvent.Aiming(this.game)
-                return
-            }
-            // add lines of balls
-            const grid = this.game.grid
-            this.numberLines =
-                this.numberLines === null ? lives.max : this.numberLines
+            if (lives.current === 0) {
+                this.addLinesOfBall()
 
-            // BUG wrong move lines
+                lives.max = lives.max === 1 ? 1 : --lives.max
+                lives.current = lives.max
+
+                this.game.currentEvent = new GameEvent.PopFreeBall(this.game)
+            } else {
+                this.game.currentEvent = new GameEvent.Aiming(this.game)
+            }
+        }
+        addLinesOfBall() {
+            const grid = this.game.grid
+            const numberRows = this.game.lives.max
             grid.cells
                 .slice()
                 .reverse()
                 .forEach((cell) => {
                     // move balls
-                    const replacingCell =
-                        cell.ball == true
-                            ? grid.getCellByPosition(
-                                  cell.row + this.numberLines,
-                                  cell.col
-                              )
-                            : false
-                    if (replacingCell) {
-                        replacingCell.ball = cell.ball
+                    if (cell.ball) {
+                        const replacingCell = grid.getCellByPosition(
+                            cell.row + numberRows,
+                            cell.col
+                        )
+                        if (replacingCell) {
+                            replacingCell.ball = cell.ball
+                            cell.ball = null
+                        }
                     }
                     // add new line of balls
-                    if (cell.row <= this.numberLines) {
+                    if (!cell.ball && cell.row < numberRows) {
                         cell.ball = new GameObject.Ball(this.game)
                         cell.ball.addToGameObjects()
                     }
                 })
-
-            // refresh lives
-            let nextMaxLives = lives.max === 4 ? 1 : --lives.max
-
-            this.game.currentEvent = new GameEvent.PopFreeBall(this.game)
         }
     }
 }
@@ -448,9 +485,9 @@ class GameObject {
             const cells = []
             const distance = GameObject.Ball.radius * 2
             let yShift = distance / 2
-            for (let row = 0; row < 20; row++) {
+            for (let row = 0; row < 19; row++) {
                 const xShift = (distance / 2) * ((row % 2) + 1) // (distance / 2) * ((row + 1) % 2)
-                for (let col = 0; col < 20; col++) {
+                for (let col = 0; col < 19; col++) {
                     if (col * distance + xShift === 0) {
                         continue
                     }
@@ -480,7 +517,7 @@ class GameObject {
             })
         }
 
-        sortCellByDistance(array, x, y, len = 0) {
+        sortCellByDistance(array, x, y, len = 1) {
             const point = { x: x, y: y }
             const r = GameObject.Ball.radius
             function getRange(cell) {
@@ -612,4 +649,16 @@ const game = new Game(new Field())
 // cell.ball.y = cell.y
 // game.objects.push(cell.ball)
 
+//*****************************
+
+// cell = game.grid.getCellByPosition(0, 1)
+// cell.ball = new GameObject.Ball(game, 1)
+// cell.ball.x = cell.x
+// cell.ball.y = cell.y
+// game.objects.push(cell.ball)
+
 game.start()
+
+// TODO:
+// add animations
+// balance lives and lines (change possible colors)
