@@ -176,12 +176,7 @@ class GameEvent {
             if (wasClick) {
                 // prepare ball
                 const ball = this.ball
-                const moveVector = new Vector(
-                    field.aimX,
-                    field.aimY,
-                    field.clickX,
-                    field.clickY
-                )
+                const moveVector = new Vector(field.aimX, field.aimY, field.clickX, field.clickY)
                 moveVector.len = ball.speed
                 ball.moveVector = moveVector
 
@@ -190,10 +185,7 @@ class GameEvent {
                 field.clickY = -1
 
                 // change event
-                this.game.currentEvent = new GameEvent.CheckCollision(
-                    this.game,
-                    ball
-                )
+                this.game.currentEvent = new GameEvent.CheckCollision(this.game, ball)
             }
         }
     }
@@ -225,21 +217,14 @@ class GameEvent {
                 ball.moveVector.length = 0
                 cellForBall.ball = ball
 
-                this.game.currentEvent = new GameEvent.PopSameLinkedBall(
-                    this.game,
-                    cellForBall
-                )
+                this.game.currentEvent = new GameEvent.PopSameLinkedBall(this.game, cellForBall)
             }
         }
 
         getCollision() {
             const grid = this.game.grid
             const ball = this.ball
-            const nearestCell = grid.sortCellByDistance(
-                grid.cells,
-                ball.x,
-                ball.y
-            )[0]
+            const nearestCell = grid.sortCellByDistance(grid.cells, ball.x, ball.y)[0]
 
             const cellsAround = grid.getCellsAround(nearestCell)
             const fillAround = []
@@ -251,11 +236,7 @@ class GameEvent {
                     emptyAround.push(cell)
                 }
             })
-            const nearestEmptyCell = grid.sortCellByDistance(
-                emptyAround,
-                ball.x,
-                ball.y
-            )[0]
+            const nearestEmptyCell = grid.sortCellByDistance(emptyAround, ball.x, ball.y)[0]
 
             const collision = {
                 nearestEmptyCell: nearestEmptyCell,
@@ -266,10 +247,7 @@ class GameEvent {
                 collision.type = 'top'
                 return collision
             }
-            if (
-                ball.x - ball.radius <= 0 ||
-                ball.x + ball.radius >= this.game.field.canvas.width
-            ) {
+            if (ball.x - ball.radius <= 0 || ball.x + ball.radius >= this.game.field.canvas.width) {
                 collision.type = 'side'
                 return collision
             }
@@ -279,9 +257,7 @@ class GameEvent {
             }
             const isFillCellInRange = fillAround.find((cell) => {
                 const checkRange =
-                    (cell.x - ball.x) ** 2 +
-                    (cell.y - ball.y) ** 2 -
-                    ball.checkRadius ** 2
+                    (cell.x - ball.x) ** 2 + (cell.y - ball.y) ** 2 - ball.checkRadius ** 2
                 return checkRange <= 0
             })
             if (isFillCellInRange) {
@@ -298,22 +274,55 @@ class GameEvent {
         constructor(game, cell = null) {
             super(game)
             this.cell = cell
-            this.waitList = null
+            this.linkedCellsByStep = null
         }
         do() {
             super.do()
-            if (!this.waitList) {
-                const LinkedCellsByStep = this.getLinkedCellsByStep(cell)
+            if (this.linkedCellsByStep === null && cell != null) {
+                this.initSameBallsPopping()
+                this.setupPoppingAnimations()
+
+                return
+            }
+            if (this.linkedCellsByStep.length > 0) {
+                // check step animations
+                // delete balls
+                return
+            }
+            if (this.linkedCellsByStep.length === 0) {
+                // change event
+                return
             }
         }
 
-        getLinkedCellsByStep(cell) {
-            if (cell === null) {
-                return this.getLinkedCellsWithFreeBalls()
-            } else {
-                return this.getLinkedCellsWithSameBalls(cell)
+        initSameBallsPopping() {
+            this.linkedCellsByStep = this.getLinkedCellsWithSameBalls()
+            const numberBalls = this.linkedCellsByStep.reduce((count, step) => {
+                return (count += step.size)
+            }, 0)
+
+            if (numberBalls < 3) {
+                --this.game.lives.current
             }
         }
+
+        setupPoppingAnimations() {
+            delay = 0
+            this.linkedCellsByStep.forEach((step) => {
+                step.forEach((cell) => {
+                    const ball = cell.ball.setPopAnimation(delay)
+                })
+                delay += 100
+            })
+        }
+
+        // getLinkedCellsByStep(cell) {
+        //     if (cell === null) {
+        //         return this.getLinkedCellsWithFreeBalls()
+        //     } else {
+        //         return this.getLinkedCellsWithSameBalls(cell)
+        //     }
+        // }
 
         getLinkedCellsWithFreeBalls(
             cells = this.game.grid.cells.filter((cell) => {
@@ -360,11 +369,7 @@ class GameEvent {
                     linkedCellsByStep.push(newStep)
                     newStep.add(currentCell)
 
-                    this.getLinkedCellsWithSameBalls(
-                        currentCell,
-                        linkedCellsByStep,
-                        processedCells
-                    )
+                    this.getLinkedCellsWithSameBalls(currentCell, linkedCellsByStep, processedCells)
                 }
             }
             return linkedCellsByStep
@@ -440,11 +445,7 @@ class GameEvent {
                     linkedCells.add(cell)
                     processedCells.add(cell)
                     const surroundingCells = cell.grid.getCellsAround(cell)
-                    this.getLinkedCell(
-                        surroundingCells,
-                        linkedCells,
-                        processedCells
-                    )
+                    this.getLinkedCell(surroundingCells, linkedCells, processedCells)
                 }
             })
             return linkedCells
@@ -582,16 +583,10 @@ class GameObject {
             this.speed = Settings.ballSpeed
             this.checkRadius = Settings.ballCheckRadius
             this.type = GameObject.Ball.getType(typeID)
+            this.animation = null
         }
 
-        static possibleTypes = [
-            'ball_1',
-            'ball_2',
-            'ball_3',
-            'ball_4',
-            'ball_5',
-            'ball_6'
-        ]
+        static possibleTypes = ['ball_1', 'ball_2', 'ball_3', 'ball_4', 'ball_5', 'ball_6']
 
         static getType(typeID) {
             if (typeID === undefined) {
@@ -609,9 +604,23 @@ class GameObject {
         draw() {
             super.draw()
             const ctx = this.field.ctx
+            let imageName = this.type.imageName
+
+            if (this.animation != null) {
+                const animation = this.animation
+                const currentSlide = animation.slides[0]
+                if (!currentSlide) {
+                    this.animation = null
+                } else if (currentSlide.frames <= 0) {
+                    animation.slides.shift()
+                } else {
+                    --currentSlide.frames
+                    imageName = currentSlide.imageName
+                }
+            }
 
             ctx.drawImage(
-                Settings.images.get(this.type.imageName),
+                Settings.images.get(imageName),
                 this.x - this.radius,
                 this.y - this.radius,
                 2 * this.radius,
@@ -626,6 +635,27 @@ class GameObject {
             // ctx.beginPath()
             // ctx.arc(this.x, this.y, this.radius, 0, 2 * Math.PI)
             // ctx.fill()
+        }
+
+        setPopAnimation(delay = 0) {
+            const animation = {
+                name: 'popBall',
+                slides: [
+                    {
+                        frames: delay + 100,
+                        imageName: Settings.images.get(`${this.type.imageName}_pop_0`)
+                    },
+                    {
+                        frames: 100,
+                        imageName: Settings.images.get(`${this.type.imageName}_pop_1`)
+                    },
+                    {
+                        frames: 100,
+                        imageName: Settings.images.get(`${this.type.imageName}_pop_2`)
+                    }
+                ]
+            }
+            return animation
         }
     }
 
@@ -679,8 +709,7 @@ class GameObject {
             const theNearestCell = this.cells
                 .filter((cell) => {
                     return (
-                        Math.abs(point.x - cell.x) <= 4 * r &&
-                        Math.abs(point.y - cell.y) <= 4 * r
+                        Math.abs(point.x - cell.x) <= 4 * r && Math.abs(point.y - cell.y) <= 4 * r
                     )
                 })
                 .sort((a, b) => {
