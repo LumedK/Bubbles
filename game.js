@@ -167,6 +167,9 @@ class GameEvent {
             super(game)
             this.ball = new GameObject.Ball(game) // debug
             this.game.objects.push(this.ball)
+
+            this.game.field.clickX = -1
+            this.game.field.clickY = -1
         }
         do() {
             super.do()
@@ -217,7 +220,8 @@ class GameEvent {
                 ball.moveVector.length = 0
                 cellForBall.ball = ball
 
-                this.game.currentEvent = new GameEvent.PopSameLinkedBall(this.game, cellForBall)
+                // this.game.currentEvent = new GameEvent.PopSameLinkedBall(this.game, cellForBall)
+                this.game.currentEvent = new GameEvent.Popping(this.game, cellForBall)
             }
         }
 
@@ -274,166 +278,89 @@ class GameEvent {
         constructor(game, cell = null) {
             super(game)
             this.cell = cell
-            this.linkedCellsByStep = null
+            this.linkedCellsByStep = null // array of set
         }
         do() {
             super.do()
-            if (this.linkedCellsByStep === null && cell != null) {
-                this.initSameBallsPopping()
-                this.setupPoppingAnimations()
+            if (this.linkedCellsByStep === null) {
+                if (this.cell != null) {
+                    // get same linked balls
+                    this.initSameBallsPopping()
+                }
+                if (this.cell === null) {
+                    // get free linked balls
+                    this.initFreeBallsPopping()
+                }
+                if (this.linkedCellsByStep != null) {
+                    this.setupPoppingAnimations()
+                }
+            }
+
+            if (this.linkedCellsByStep === null || this.linkedCellsByStep.length === 0) {
+                if (this.cell) {
+                    this.cell = null
+                    this.linkedCellsByStep = null
+                    // pop free cells
+                    return
+                }
+
+                // change event
+                this.game.currentEvent = new GameEvent.CheckGameStatus(this.game)
+                return
+            }
+
+            if (this.linkedCellsByStep.length > 0) {
+                // remove balls with completed animation
+                const currentStep = Array.from(this.linkedCellsByStep[0])
+                if (this.isAnimationFinished(currentStep)) {
+                    this.game.deleteBalls(currentStep)
+                    this.linkedCellsByStep.splice(0, 1) // delete current step
+                }
 
                 return
             }
-            if (this.linkedCellsByStep.length > 0) {
-                // check step animations
-                // delete balls
-                return
-            }
-            if (this.linkedCellsByStep.length === 0) {
-                // change event
-                return
-            }
+        }
+
+        isAnimationFinished(currentStep) {
+            return currentStep.every((cell) => {
+                return cell.ball && cell.ball.animation === null
+            })
         }
 
         initSameBallsPopping() {
-            this.linkedCellsByStep = this.getLinkedCellsWithSameBalls()
-            const numberBalls = this.linkedCellsByStep.reduce((count, step) => {
+            const linkedCellsByStep = this.getLinkedCellsWithSameBalls()
+            const numberBalls = linkedCellsByStep.reduce((count, step) => {
                 return (count += step.size)
             }, 0)
 
-            if (numberBalls < 3) {
-                --this.game.lives.current
-            }
-        }
-
-        setupPoppingAnimations() {
-            delay = 0
-            this.linkedCellsByStep.forEach((step) => {
-                step.forEach((cell) => {
-                    const ball = cell.ball.setPopAnimation(delay)
-                })
-                delay += 100
-            })
-        }
-
-        // getLinkedCellsByStep(cell) {
-        //     if (cell === null) {
-        //         return this.getLinkedCellsWithFreeBalls()
-        //     } else {
-        //         return this.getLinkedCellsWithSameBalls(cell)
-        //     }
-        // }
-
-        getLinkedCellsWithFreeBalls(
-            cells = this.game.grid.cells.filter((cell) => {
-                return cell.row === 0 && cell.ball
-            }),
-            linkedCellsByStep = [new Set([cells])],
-            processedCells = new Set()
-        ) {
-            cells.forEach((cell) => {
-                if (!processedCells.has(cell) && cell.ball) {
-                    const newStep = new Set()
-                    linkedCellsByStep.push(newStep)
-
-                    newStep.add(cell)
-                    processedCells.add(cell)
-                    const surroundingCells = cell.grid.getCellsAround(cell)
-
-                    this.getLinkedCellsWithFreeBalls(
-                        surroundingCells,
-                        linkedCellsByStep,
-                        processedCells
-                    )
-                }
-            })
-            return linkedCellsByStep
-        }
-
-        getLinkedCellsWithSameBalls(
-            cell = this.cell,
-            linkedCellsByStep = [new Set([cells])],
-            processedCells = new Set([cell])
-        ) {
-            const surroundingCells = cell.grid.getCellsAround(cell)
-            for (let currentCell of surroundingCells) {
-                if (processedCells.has(currentCell)) {
-                    continue
-                }
-                processedCells.add(currentCell)
-                if (
-                    currentCell.ball &&
-                    currentCell.ball.type.typeID === this.cell.ball.type.typeID
-                ) {
-                    const newStep = new Set()
-                    linkedCellsByStep.push(newStep)
-                    newStep.add(currentCell)
-
-                    this.getLinkedCellsWithSameBalls(currentCell, linkedCellsByStep, processedCells)
-                }
-            }
-            return linkedCellsByStep
-        }
-    }
-
-    static PopSameLinkedBall = class extends GameEvent {
-        constructor(game, cell) {
-            super(game)
-            this.cell = cell
-        }
-        do() {
-            super.do()
-            const LinkedCell = this.getLinkedCell()
-            if (LinkedCell.size >= 3) {
-                this.game.deleteBalls(LinkedCell)
+            if (numberBalls >= 3) {
+                this.linkedCellsByStep = linkedCellsByStep
             } else {
                 --this.game.lives.current
             }
-
-            // change event
-            this.game.currentEvent = new GameEvent.PopFreeBall(this.game)
         }
 
-        getLinkedCell(
-            cell = this.cell,
-            linkedCells = new Set([cell]),
-            processedCells = new Set([cell])
-        ) {
-            const surroundingCells = cell.grid.getCellsAround(cell)
-            for (let currentCell of surroundingCells) {
-                if (processedCells.has(currentCell)) {
-                    continue
+        initFreeBallsPopping() {
+            const linkedCells = this.getLinkedCellsWithFreeBalls()
+            this.linkedCellsByStep = []
+            this.game.grid.cells.forEach((cell) => {
+                if (cell.ball && !linkedCells.has(cell)) {
+                    this.linkedCellsByStep.push(new Set([cell]))
                 }
-                processedCells.add(currentCell)
-                if (
-                    currentCell.ball &&
-                    currentCell.ball.type.typeID === this.cell.ball.type.typeID
-                ) {
-                    linkedCells.add(currentCell)
-                    this.getLinkedCell(currentCell, linkedCells, processedCells)
-                }
-            }
-            return linkedCells
-        }
-    }
-
-    static PopFreeBall = class extends GameEvent {
-        constructor(game) {
-            super(game)
-        }
-        do() {
-            super.do()
-            const LinkedCell = this.getLinkedCell()
-            const freeBallCells = this.game.grid.cells.filter((cell) => {
-                return cell.ball && !LinkedCell.has(cell)
             })
-            this.game.deleteBalls(freeBallCells)
-
-            // change event
-            this.game.currentEvent = new GameEvent.CheckGameStatus(this.game)
         }
 
-        getLinkedCell(
+        setupPoppingAnimations() {
+            let delay = 0
+            this.linkedCellsByStep.forEach((step) => {
+                step.forEach((cell) => {
+                    cell.ball.setPopAnimation(delay)
+                })
+                delay += 2
+            })
+        }
+
+        getLinkedCellsWithFreeBalls(
             cells = this.game.grid.cells.filter((cell) => {
                 return cell.row === 0 && cell.ball
             }),
@@ -445,10 +372,46 @@ class GameEvent {
                     linkedCells.add(cell)
                     processedCells.add(cell)
                     const surroundingCells = cell.grid.getCellsAround(cell)
-                    this.getLinkedCell(surroundingCells, linkedCells, processedCells)
+                    this.getLinkedCellsWithFreeBalls(surroundingCells, linkedCells, processedCells)
                 }
             })
             return linkedCells
+        }
+
+        getLinkedCellsWithSameBalls(
+            linkedCellsByStep = [new Set([this.cell])],
+            processedCells = new Set([this.cell]),
+            checkStack = new Map([[this.cell, 0]])
+        ) {
+            function getStep(index) {
+                if (linkedCellsByStep[index]) {
+                    return linkedCellsByStep[index]
+                } else {
+                    const step = new Set()
+                    linkedCellsByStep.push(step)
+                    return step
+                }
+            }
+
+            checkStack.forEach((stepIndex, cell) => {
+                const step = getStep(stepIndex)
+                step.add(cell)
+
+                // get surrounding cells
+                for (let surroundingCell of cell.grid.getCellsAround(cell)) {
+                    if (processedCells.has(surroundingCell)) {
+                        continue
+                    }
+                    processedCells.add(surroundingCell)
+                    if (
+                        surroundingCell.ball &&
+                        surroundingCell.ball.type.typeID === this.cell.ball.type.typeID
+                    ) {
+                        checkStack.set(surroundingCell, stepIndex + 1)
+                    }
+                }
+            })
+            return linkedCellsByStep
         }
     }
 
@@ -488,7 +451,7 @@ class GameEvent {
                 lives.max = lives.max === 1 ? 1 : --lives.max
                 lives.current = lives.max
 
-                this.game.currentEvent = new GameEvent.PopFreeBall(this.game)
+                this.game.currentEvent = new GameEvent.Popping(this.game)
             } else {
                 this.game.currentEvent = new GameEvent.Aiming(this.game)
             }
@@ -642,20 +605,24 @@ class GameObject {
                 name: 'popBall',
                 slides: [
                     {
-                        frames: delay + 100,
-                        imageName: Settings.images.get(`${this.type.imageName}_pop_0`)
+                        frames: delay,
+                        imageName: this.type.imageName
                     },
                     {
-                        frames: 100,
-                        imageName: Settings.images.get(`${this.type.imageName}_pop_1`)
+                        frames: 1,
+                        imageName: `${this.type.imageName}_pop_0`
                     },
                     {
-                        frames: 100,
-                        imageName: Settings.images.get(`${this.type.imageName}_pop_2`)
+                        frames: 2,
+                        imageName: `${this.type.imageName}_pop_1`
+                    },
+                    {
+                        frames: 2,
+                        imageName: `${this.type.imageName}_pop_2`
                     }
                 ]
             }
-            return animation
+            this.animation = animation
         }
     }
 
@@ -842,5 +809,4 @@ const game = new Game(new Field())
 game.start()
 
 // TODO:
-// add animations
 // balance lives and lines (change possible colors)
