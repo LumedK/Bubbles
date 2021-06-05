@@ -2,12 +2,17 @@
 <html lang="en">
     <head>
         <meta charset="UTF-8" />
-        <link rel="stylesheet" href="./index.css" />
+        <link rel="stylesheet" href="index.css" />
         <title>Game</title>
     </head>
     <body>
         <h1>Game</h1>
+        <div id="FPSCounter">
+            FPS
+            <div id="fps"></div>
+        </div>
+
         <canvas id="gameField"></canvas>
-        <script src="./game.js"></script>
+        <script src="game_render.js" type="module"></script>
     </body>
 </html>
