@@ -29,8 +29,7 @@ export class Settings {
                 if (this.maxLives === 0) {
                     this.maxLives = Settings.maxLives
                 }
-                this.currentLives =
-                    this.currentLives < 0 ? 0 : this.currentLives - 1
+                this.currentLives = this.currentLives < 0 ? 0 : this.currentLives - 1
             },
             refreshLives() {
                 this.currentLives = this.maxLives
@@ -45,9 +44,7 @@ export class Settings {
                     [3, 4, 5, 6],
                     [4, 5, 6, 7]
                 ]
-                return addLineRule[GameObject.Ball.possibleTypes.length - 1][
-                    this.maxLives - 1
-                ]
+                return addLineRule[GameObject.Ball.possibleTypes.length - 1][this.maxLives - 1]
             }
         }
     })()
@@ -61,15 +58,13 @@ export class Message {
 
         this.action = action
         this.attachment = attachment
+
+        if (this.constructor.worker) {
+            this.constructor.worker.onmessage = this.constructor.onmessage
+        }
     }
 
-    static actions = (() => {
-        const actions = new Set()
-        actions.add('start_game')
-        actions.add('on_click')
-        actions.add('animation_complete')
-    })()
-
+    static actions = new Set(['start_game', 'on_click', 'animation_complete', 'to_render'])
     static worker = undefined
     static onmessage = undefined
 
@@ -82,31 +77,27 @@ export class Message {
 }
 
 class Game {
-    static game = null
     constructor() {
-        this.renderObjects = []
+        this.objects = new Set()
+        new GameObject.AimingLine(this)
+
         this.grid = new GameObject.Grid(this)
-        this.renderObjects.push(this.grid)
-        this.renderObjects.push(new GameObject.AimingLine(this))
         this.rules = Settings.gameRules
 
         this.currentEvent = new GameEvent.AddBallLine(this)
         this.currentEvent.addLinesOfBall()
 
-        this.currentBall = new GameObject.Ball(this)
         this.nextBall = new GameObject.Ball(this)
         this.nextBall.replaceToNextBallPosition()
-
-        this.renderObjects.push(this.currentBall)
-        this.renderObjects.push(this.nextBall)
-
-        Game.game = this
+        this.currentBall = new GameObject.Ball(this)
     }
 
     getRenderObjects() {
         const result = []
-        this.renderObjects.forEach((obj) => {
-            result.push(obj.getRenderObject())
+        this.objects.forEach((object) => {
+            if (object.isRender) {
+                result.push(object.getRenderObject())
+            }
         })
         return result
     }
@@ -120,6 +111,253 @@ class Game {
     // }
 }
 
+export class GameObject {
+    constructor(game, isRender = false) {
+        this.game = game
+        this.isRender = isRender
+        this.game.objects.add(this)
+    }
+
+    static AimingLine = class extends GameObject {
+        constructor(game) {
+            super(game, true)
+        }
+
+        static render(renderObject, field) {
+            const ctx = field.ctx
+
+            const cursorX = field.cursorX
+            const cursorY = field.cursorY
+
+            const ballSpawnX = Settings.ballSpawnX
+            const ballSpawnY = Settings.ballSpawnY
+
+            const aimVector = new Vector(ballSpawnX, ballSpawnY, cursorX, cursorY)
+
+            // dev aim
+            aimVector.len = 1000
+            ctx.strokeStyle = 'red'
+            ctx.beginPath()
+            ctx.moveTo(ballSpawnX, ballSpawnY)
+            ctx.lineTo(aimVector._xEnd, aimVector._yEnd)
+            ctx.stroke()
+
+            aimVector.len = Settings.aimLength
+
+            ctx.strokeStyle = 'white'
+            ctx.beginPath()
+            ctx.moveTo(ballSpawnX, ballSpawnY)
+            ctx.lineTo(aimVector._xEnd, aimVector._yEnd)
+            ctx.stroke()
+        }
+        getRenderObject() {
+            return {
+                type: 'AimingLine'
+            }
+        }
+    }
+
+    static Ball = class extends GameObject {
+        constructor(game, typeID = undefined) {
+            super(game, true)
+            this.x = Settings.ballSpawnX
+            this.y = Settings.ballSpawnY
+            this.radius = Settings.ballRadius
+            this.moveVector = null
+            this.speed = Settings.ballSpeed
+            this.checkRadius = Settings.ballCheckRadius
+            this.type = GameObject.Ball.getType(typeID)
+            this.trajectory = undefined
+        }
+
+        static possibleTypes = ['ball_1', 'ball_2', 'ball_3', 'ball_4', 'ball_5', 'ball_6']
+
+        static getType(typeID) {
+            if (typeID === undefined) {
+                typeID = getRandomInt(0, GameObject.Ball.possibleTypes.length - 1)
+            }
+            return {
+                typeID: typeID,
+                imageName: GameObject.Ball.possibleTypes[typeID]
+            }
+        }
+
+        static render(renderObject, field, image) {
+            const ctx = field.ctx
+            let sizeMultiplier = 1
+
+            if (renderObject.trajectory) {
+                const step = renderObject.trajectory[0]
+                if (step) {
+                    step.x += step.dx
+                    step.y += step.dy
+                    step.size += step.dSize
+
+                    image = step.image ? step.image : image
+                    sizeMultiplier = step.size ? step.size : sizeMultiplier
+
+                    step.length -= 1
+
+                    renderObject.x = step.x
+                    renderObject.y = step.y
+
+                    if (step.length === 0) {
+                        renderObject.trajectory.shift()
+                    }
+                }
+                if (renderObject.trajectory.length === 0) {
+                    renderObject.trajectory = undefined
+                }
+            }
+
+            ctx.drawImage(
+                image,
+                renderObject.x - renderObject.radius * sizeMultiplier,
+                renderObject.y - renderObject.radius * sizeMultiplier,
+                2 * renderObject.radius * sizeMultiplier,
+                2 * renderObject.radius * sizeMultiplier
+            )
+        }
+
+        getRenderObject() {
+            return {
+                type: 'Ball',
+                x: this.x,
+                y: this.y,
+                radius: this.radius,
+                imageName: this.type.imageName,
+                trajectory: this.trajectory?.getRenderObject()
+            }
+        }
+
+        replaceToNextBallPosition() {
+            this.x = Settings.nextBallSpawnX
+            this.y = Settings.nextBallSpawnY
+        }
+    }
+
+    static Grid = class extends GameObject {
+        constructor(game) {
+            super(game, true)
+            this.cells = []
+            this.matrix = []
+            this.emptyCells = new Set()
+            this.fillCells = new Set()
+            this.initCells()
+        }
+
+        initCells() {
+            const r = Settings.ballRadius
+            for (let row = 0; row <= Settings.rows; row++) {
+                this.matrix[row] = []
+                for (let column = 0; column < Settings.columns; column++) {
+                    new GameObject.Cell({
+                        game: this.game,
+                        grid: this,
+                        x: r * (2 * column + 1 + (row % 2)),
+                        y: r * (2 * row + 1),
+                        row: row,
+                        column: column
+                    })
+                }
+            }
+        }
+
+        sortCellByDistance(array, x, y, len = 1) {
+            const point = { x: x, y: y }
+            const r = GameObject.Ball.radius
+            function getRange(cell) {
+                return new Vector(point.x, point.y, cell.x, cell.y)._len
+            }
+            const theNearestCell = this.cells
+                .filter((cell) => {
+                    return (
+                        Math.abs(point.x - cell.x) <= 4 * r && Math.abs(point.y - cell.y) <= 4 * r
+                    )
+                })
+                .sort((a, b) => {
+                    return getRange(a) - getRange(b)
+                })
+                .slice(0, len)
+            return theNearestCell
+        }
+
+        getCellByPosition(row, col) {
+            return this.cells.find((cell) => {
+                return cell.row === row && cell.column === col
+            })
+        }
+
+        getCellsAround(cell) {
+            const row = cell.row
+            const col = cell.column
+            const cellsAround = new Set()
+            cellsAround.add(this.getCellByPosition(row, col)) // current cell
+            cellsAround.add(this.getCellByPosition(row, col - 1)) // left cell
+            cellsAround.add(this.getCellByPosition(row, col + 1)) // right cell
+            cellsAround.add(this.getCellByPosition(row - 1, col)) // top cell
+            cellsAround.add(this.getCellByPosition(row + 1, col)) // bottom cell
+            const shift = row % 2 === 0 ? -1 : +1
+            cellsAround.add(this.getCellByPosition(row - 1, col + shift)) // top shift cell
+            cellsAround.add(this.getCellByPosition(row + 1, col + shift)) // bottom shift cell
+
+            cellsAround.delete(undefined)
+            return Array.from(cellsAround)
+        }
+
+        static render(renderObject, field) {
+            const ctx = field.ctx
+            renderObject.cells.forEach((point) => {
+                ctx.fillStyle = 'white'
+                ctx.beginPath()
+                ctx.arc(point.x, point.y, 1, 0, 2 * Math.PI)
+                ctx.fill()
+            })
+        }
+
+        getRenderObject() {
+            const renderCells = []
+            this.cells.forEach((cell) => {
+                renderCells.push({ x: cell.x, y: cell.y })
+            })
+            return { type: 'Grid', cells: renderCells }
+        }
+    }
+
+    static Cell = class extends GameObject {
+        constructor({ game, grid, x, y, row, column }) {
+            super(game)
+            this.grid = grid
+            this.x = x
+            this.y = y
+            this.row = row
+            this.column = column
+            this._ball = undefined
+            this.ball = undefined // set ball
+
+            this.grid.cells.push(this)
+            this.grid.matrix[row].push(this)
+        }
+
+        set ball(ball) {
+            this._ball = ball
+            if (ball) {
+                this.grid.fillCells.add(this)
+                this.grid.emptyCells.delete(this)
+                this._ball.x = this.x
+                this._ball.y = this.y
+            } else {
+                this.grid.fillCells.delete(this)
+                this.grid.emptyCells.add(this)
+            }
+        }
+
+        get ball() {
+            return this._ball
+        }
+    }
+}
+
 class GameEvent {
     constructor(game) {
         this.game = game
@@ -129,8 +367,6 @@ class GameEvent {
     static Aiming = class extends GameEvent {
         constructor(game) {
             super(game)
-            // this.game.field.clickX = -1
-            // this.game.field.clickY = -1
         }
         do(ClickCoords) {
             // prepare ball
@@ -138,26 +374,31 @@ class GameEvent {
             const moveVector = new Vector(
                 Settings.ballSpawnX,
                 Settings.ballSpawnY,
-                ClickCoords.clickX,
-                ClickCoords.clickY
+                ClickCoords.x,
+                ClickCoords.y
             )
             moveVector.len = ball.speed
             ball.moveVector = moveVector
-            ball.trajectory = new Trajectory(
-                this.game,
-                ClickCoords.clickX,
-                ClickCoords.clickY,
-                moveVector
-            )
+            ball.trajectory = new Trajectory(this.game, moveVector)
 
             // prepare next ball
             this.game.currentBall = this.game.nextBall
-            this.game.nextBall = new GameObject.Ball()
-            this.game.renderObjects.push(this.game.nextBall)
+            this.game.nextBall = new GameObject.Ball(this.game)
             this.game.nextBall.replaceToNextBallPosition()
 
-            // // change event
-            // this.game.currentEvent = new GameEvent.CheckCollision(this.game, ball)
+            // change event
+            const nextGameEvent = new GameEvent.Popping(this.game, ball.cell)
+            this.game.currentEvent = new GameEvent.WaitAnimation(this.game, nextGameEvent)
+        }
+    }
+
+    static WaitAnimation = class extends GameEvent {
+        constructor(game, nextGameEvent) {
+            super(game)
+            this.nextGameEvent = nextGameEvent
+        }
+        do() {
+            this.game.currentEvent = this.nextGameEvent
         }
     }
 
@@ -236,132 +477,91 @@ class GameEvent {
     }
 
     static Popping = class extends GameEvent {
-        // constructor(game, cell = null) {
-        //     super(game)
-        //     this.cell = cell
-        //     this.linkedCellsByStep = null // array of set
-        // }
-        // do() {
-        //     super.do()
-        //     if (this.linkedCellsByStep === null) {
-        //         if (this.cell != null) {
-        //             // get same linked balls
-        //             this.initSameBallsPopping()
-        //         }
-        //         if (this.cell === null) {
-        //             // get free linked balls
-        //             this.initFreeBallsPopping()
-        //         }
-        //         if (this.linkedCellsByStep != null) {
-        //             this.setupPoppingAnimations()
-        //         }
-        //     }
-        //     if (this.linkedCellsByStep === null || this.linkedCellsByStep.length === 0) {
-        //         if (this.cell) {
-        //             this.cell = null
-        //             this.linkedCellsByStep = null
-        //             // pop free cells
-        //             return
-        //         }
-        //         // change event
-        //         this.game.currentEvent = new GameEvent.CheckGameStatus(this.game)
-        //         return
-        //     }
-        //     if (this.linkedCellsByStep.length > 0) {
-        //         // remove balls with completed animation
-        //         const currentStep = Array.from(this.linkedCellsByStep[0])
-        //         if (this.isAnimationFinished(currentStep)) {
-        //             this.game.deleteBalls(currentStep)
-        //             this.linkedCellsByStep.splice(0, 1) // delete current step
-        //         }
-        //         return
-        //     }
-        // }
-        // isAnimationFinished(currentStep) {
-        //     return currentStep.every((cell) => {
-        //         return cell.ball && cell.ball.animation === null
-        //     })
-        // }
-        // initSameBallsPopping() {
-        //     const linkedCellsByStep = this.getLinkedCellsWithSameBalls()
-        //     const numberBalls = linkedCellsByStep.reduce((count, step) => {
-        //         return (count += step.size)
-        //     }, 0)
-        //     if (numberBalls >= 3) {
-        //         this.linkedCellsByStep = linkedCellsByStep
-        //     } else {
-        //         this.game.rules.minusLive()
-        //         // --this.game.lives.current
-        //     }
-        // }
-        // initFreeBallsPopping() {
-        //     const linkedCells = this.getLinkedCellsWithFreeBalls()
-        //     this.linkedCellsByStep = []
-        //     this.game.grid.cells.forEach((cell) => {
-        //         if (cell.ball && !linkedCells.has(cell)) {
-        //             this.linkedCellsByStep.push(new Set([cell]))
-        //         }
-        //     })
-        // }
-        // setupPoppingAnimations() {
-        //     let delay = 0
-        //     this.linkedCellsByStep.forEach((step) => {
-        //         step.forEach((cell) => {
-        //             cell.ball.setPopAnimation(delay)
-        //         })
-        //         delay += 2
-        //     })
-        // }
-        // getLinkedCellsWithFreeBalls(
-        //     cells = this.game.grid.cells.filter((cell) => {
-        //         return cell.row === 0 && cell.ball
-        //     }),
-        //     linkedCells = new Set(cells),
-        //     processedCells = new Set()
-        // ) {
-        //     cells.forEach((cell) => {
-        //         if (!processedCells.has(cell) && cell.ball) {
-        //             linkedCells.add(cell)
-        //             processedCells.add(cell)
-        //             const surroundingCells = cell.grid.getCellsAround(cell)
-        //             this.getLinkedCellsWithFreeBalls(surroundingCells, linkedCells, processedCells)
-        //         }
-        //     })
-        //     return linkedCells
-        // }
-        // getLinkedCellsWithSameBalls(
-        //     linkedCellsByStep = [new Set([this.cell])],
-        //     processedCells = new Set([this.cell]),
-        //     checkStack = new Map([[this.cell, 0]])
-        // ) {
-        //     function getStep(index) {
-        //         if (linkedCellsByStep[index]) {
-        //             return linkedCellsByStep[index]
-        //         } else {
-        //             const step = new Set()
-        //             linkedCellsByStep.push(step)
-        //             return step
-        //         }
-        //     }
-        //     checkStack.forEach((stepIndex, cell) => {
-        //         const step = getStep(stepIndex)
-        //         step.add(cell)
-        //         // get surrounding cells
-        //         for (let surroundingCell of cell.grid.getCellsAround(cell)) {
-        //             if (processedCells.has(surroundingCell)) {
-        //                 continue
-        //             }
-        //             processedCells.add(surroundingCell)
-        //             if (
-        //                 surroundingCell.ball &&
-        //                 surroundingCell.ball.type.typeID === this.cell.ball.type.typeID
-        //             ) {
-        //                 checkStack.set(surroundingCell, stepIndex + 1)
-        //             }
-        //         }
-        //     })
-        //     return linkedCellsByStep
-        // }
+        constructor(game, cell = undefined) {
+            super(game)
+            this.cell = cell
+            this.linkedCellsByStep = null // array of set
+        }
+        do() {
+            if (this.cell) {
+                this.initSameBallsPopping()
+            } else {
+                this.initFreeBallsPopping()
+            }
+
+            // set animation
+        }
+
+        initSameBallsPopping() {
+            const linkedCellsByStep = this.getLinkedCellsWithSameBalls()
+            const numberBalls = linkedCellsByStep.reduce((count, step) => {
+                return (count += step.size)
+            }, 0)
+            if (numberBalls >= 3) {
+                this.linkedCellsByStep = linkedCellsByStep
+            } else {
+                this.game.rules.minusLive()
+            }
+        }
+        initFreeBallsPopping() {
+            const linkedCells = this.getLinkedCellsWithFreeBalls()
+            this.linkedCellsByStep = []
+            this.game.grid.cells.forEach((cell) => {
+                if (cell.ball && !linkedCells.has(cell)) {
+                    this.linkedCellsByStep.push(new Set([cell]))
+                }
+            })
+        }
+        getLinkedCellsWithFreeBalls(
+            cells = this.game.grid.cells.filter((cell) => {
+                return cell.row === 0 && cell.ball
+            }),
+            linkedCells = new Set(cells),
+            processedCells = new Set()
+        ) {
+            cells.forEach((cell) => {
+                if (!processedCells.has(cell) && cell.ball) {
+                    linkedCells.add(cell)
+                    processedCells.add(cell)
+                    const surroundingCells = cell.grid.getCellsAround(cell)
+                    this.getLinkedCellsWithFreeBalls(surroundingCells, linkedCells, processedCells)
+                }
+            })
+            return linkedCells
+        }
+        getLinkedCellsWithSameBalls(
+            linkedCellsByStep = [new Set([this.cell])],
+            processedCells = new Set([this.cell]),
+            checkStack = new Map([[this.cell, 0]])
+        ) {
+            function getStep(index) {
+                if (linkedCellsByStep[index]) {
+                    return linkedCellsByStep[index]
+                } else {
+                    const step = new Set()
+                    linkedCellsByStep.push(step)
+                    return step
+                }
+            }
+            checkStack.forEach((stepIndex, cell) => {
+                const step = getStep(stepIndex)
+                step.add(cell)
+                // get surrounding cells
+                for (let surroundingCell of cell.grid.getCellsAround(cell)) {
+                    if (processedCells.has(surroundingCell)) {
+                        continue
+                    }
+                    processedCells.add(surroundingCell)
+                    if (
+                        surroundingCell.ball &&
+                        surroundingCell.ball.type.typeID === this.cell.ball.type.typeID
+                    ) {
+                        checkStack.set(surroundingCell, stepIndex + 1)
+                    }
+                }
+            })
+            return linkedCellsByStep
+        }
     }
 
     static CheckGameStatus = class extends GameEvent {
@@ -435,10 +635,7 @@ class GameEvent {
                 .forEach((cell) => {
                     // move balls
                     if (cell.ball) {
-                        const replacingCell = grid.getCellByPosition(
-                            cell.row + shiftRow,
-                            cell.col
-                        )
+                        const replacingCell = grid.getCellByPosition(cell.row + shiftRow, cell.col)
                         if (replacingCell) {
                             replacingCell.ball = cell.ball
                             cell.ball = null
@@ -446,12 +643,8 @@ class GameEvent {
                     }
                     // add new line of balls
                     if (!cell.ball && cell.row < shiftRow) {
-                        const newBall = new GameObject.Ball(
-                            this.game,
-                            typesIDList.shift()
-                        )
+                        const newBall = new GameObject.Ball(this.game, typesIDList.shift())
                         cell.ball = newBall
-                        this.game.renderObjects.push(newBall)
                     }
                 })
         }
@@ -477,256 +670,6 @@ class GameEvent {
                 typesIDList[index] = tempValue
             })
             return typesIDList
-        }
-    }
-}
-
-export class GameObject {
-    constructor(game) {
-        this.game = game
-    }
-
-    static AimingLine = class extends GameObject {
-        constructor(game) {
-            super(game)
-        }
-
-        static render(renderObject, Field) {
-            const ctx = Field.ctx
-
-            const cursorX = Field.cursorX
-            const cursorY = Field.cursorY
-
-            const ballSpawnX = Settings.ballSpawnX
-            const ballSpawnY = Settings.ballSpawnY
-
-            const aimVector = new Vector(
-                ballSpawnX,
-                ballSpawnY,
-                cursorX,
-                cursorY
-            )
-
-            // dev aim
-            aimVector.len = 1000
-            ctx.strokeStyle = 'red'
-            ctx.beginPath()
-            ctx.moveTo(ballSpawnX, ballSpawnY)
-            ctx.lineTo(aimVector._xEnd, aimVector._yEnd)
-            ctx.stroke()
-
-            aimVector.len = Settings.aimLength
-
-            ctx.strokeStyle = 'white'
-            ctx.beginPath()
-            ctx.moveTo(ballSpawnX, ballSpawnY)
-            ctx.lineTo(aimVector._xEnd, aimVector._yEnd)
-            ctx.stroke()
-        }
-        getRenderObject() {
-            return {
-                type: 'AimingLine'
-            }
-        }
-    }
-
-    static Ball = class extends GameObject {
-        constructor(game, typeID = undefined) {
-            super(game)
-            this.x = Settings.ballSpawnX
-            this.y = Settings.ballSpawnY
-            this.radius = Settings.ballRadius
-            this.moveVector = null
-            this.speed = Settings.ballSpeed
-            this.checkRadius = Settings.ballCheckRadius
-            this.type = GameObject.Ball.getType(typeID)
-            this.trajectory = undefined
-        }
-
-        static possibleTypes = [
-            'ball_1',
-            'ball_2',
-            'ball_3',
-            'ball_4',
-            'ball_5',
-            'ball_6'
-        ]
-
-        static getType(typeID) {
-            if (typeID === undefined) {
-                typeID = getRandomInt(
-                    0,
-                    GameObject.Ball.possibleTypes.length - 1
-                )
-            }
-            return {
-                typeID: typeID,
-                imageName: GameObject.Ball.possibleTypes[typeID]
-            }
-        }
-
-        static render(renderObject, Field) {
-            const ctx = Field.ctx
-
-            ctx.drawImage(
-                Field.images.get(renderObject.imageName),
-                renderObject.x - renderObject.radius,
-                renderObject.y - renderObject.radius,
-                2 * renderObject.radius,
-                2 * renderObject.radius
-            )
-
-            if (renderObject.trajectory) {
-                const step = renderObject.trajectory[0]
-                if (step) {
-                    step.x += step.dx
-                    step.y += step.dy
-                    step.len -= 1
-
-                    renderObject.x = step.x
-                    renderObject.y = step.y
-
-                    if (step.len === 0) {
-                        renderObject.trajectory.shift()
-                    }
-                }
-                if (renderObject.trajectory.len === 0) {
-                    renderObject.trajectory = undefined
-                }
-            }
-        }
-
-        getRenderObject() {
-            return {
-                type: 'Ball',
-                x: this.x,
-                y: this.y,
-                radius: this.radius,
-                imageName: this.type.imageName,
-                trajectory: Boolean(this.trajectory)
-                    ? this.trajectory.getObjectForMessage()
-                    : undefined
-            }
-        }
-
-        replaceToNextBallPosition() {
-            this.x = Settings.nextBallSpawnX
-            this.y = Settings.nextBallSpawnY
-        }
-    }
-
-    static Grid = class extends GameObject {
-        constructor(game) {
-            super(game)
-            this.cellByRow = []
-            this.cells = GameObject.Grid.initCells(this)
-        }
-
-        static initCells(grid) {
-            const cells = []
-            const r = Settings.ballRadius
-            for (let row = 0; row <= Settings.rows; row++) {
-                const line = []
-                for (let col = 0; col < Settings.columns; col++) {
-                    const x = r * (2 * col + 1 + (row % 2))
-                    const y = r * (2 * row + 1)
-                    const cell = new GameObject.Cell(
-                        grid.game, // game
-                        grid, // grid
-                        x, // x
-                        y, // y
-                        row, // row
-                        col // column
-                    )
-                    cells.push(cell)
-                    line.push(cell)
-                }
-                grid.cellByRow.push(line)
-            }
-            return cells
-        }
-
-        static render(renderObject, Field) {
-            const ctx = Field.ctx
-            renderObject.cells.forEach((point) => {
-                ctx.fillStyle = 'white'
-                ctx.beginPath()
-                ctx.arc(point.x, point.y, 1, 0, 2 * Math.PI)
-                ctx.fill()
-            })
-        }
-
-        getRenderObject() {
-            const renderCells = []
-            this.cells.forEach((cell) => {
-                renderCells.push({ x: cell.x, y: cell.y })
-            })
-            return { type: 'Grid', cells: renderCells }
-        }
-
-        sortCellByDistance(array, x, y, len = 1) {
-            const point = { x: x, y: y }
-            const r = GameObject.Ball.radius
-            function getRange(cell) {
-                return new Vector(point.x, point.y, cell.x, cell.y)._len
-            }
-            const theNearestCell = this.cells
-                .filter((cell) => {
-                    return (
-                        Math.abs(point.x - cell.x) <= 4 * r &&
-                        Math.abs(point.y - cell.y) <= 4 * r
-                    )
-                })
-                .sort((a, b) => {
-                    return getRange(a) - getRange(b)
-                })
-                .slice(0, len)
-            return theNearestCell
-        }
-
-        getCellByPosition(row, col) {
-            return this.cells.find((cell) => {
-                return cell.row === row && cell.col === col
-            })
-        }
-
-        getCellsAround(cell) {
-            const row = cell.row
-            const col = cell.col
-            const cellsAround = new Set()
-            cellsAround.add(this.getCellByPosition(row, col)) // current cell
-            cellsAround.add(this.getCellByPosition(row, col - 1)) // left cell
-            cellsAround.add(this.getCellByPosition(row, col + 1)) // right cell
-            cellsAround.add(this.getCellByPosition(row - 1, col)) // top cell
-            cellsAround.add(this.getCellByPosition(row + 1, col)) // bottom cell
-            const shift = row % 2 === 0 ? -1 : +1
-            cellsAround.add(this.getCellByPosition(row - 1, col + shift)) // top shift cell
-            cellsAround.add(this.getCellByPosition(row + 1, col + shift)) // bottom shift cell
-
-            cellsAround.delete(undefined)
-            return Array.from(cellsAround)
-        }
-    }
-
-    static Cell = class extends GameObject {
-        constructor(game, grid, x, y, row, column) {
-            super(game)
-            this.grid = grid
-            this.x = x
-            this.y = y
-            this.row = row
-            this.col = column
-            this._ball = null
-        }
-        set ball(ball) {
-            if (ball instanceof GameObject.Ball) {
-                ball.x = this.x
-                ball.y = this.y
-            }
-            this._ball = ball
-        }
-        get ball() {
-            return this._ball
         }
     }
 }
@@ -757,12 +700,12 @@ class Vector {
 
     set xStart(xNewStart) {
         this._xStart = xNewStart
-        this._xEnd = this._xStart + this.dx
+        this._xEnd = this._xStart - this.dx
     }
 
     set yStart(yNewStart) {
         this._yStart = yNewStart
-        this._yEnd = this._yStart + this.dy
+        this._yEnd = this._yStart - this.dy
     }
 
     set yEnd(yNewEnd) {
@@ -786,8 +729,9 @@ class Vector {
     }
 
     reflectByX() {
-        this._x = -this._x
-        this._xEnd = this._xEnd + 2 * this._x
+        // this._x = -this._x
+        // this._xEnd = this._xEnd + 2 * this._x
+        this._xEnd = this._xEnd - 2 * this.dx
     }
 
     copy() {
@@ -796,140 +740,104 @@ class Vector {
 }
 
 class Trajectory {
-    constructor(game, clickX, clickY, startVector) {
-        this.trajectory = Trajectory.initiate(game, clickX, clickY, startVector)
+    constructor(game, startVector) {
+        this.game = game
+        this.trajectory = []
+        this.cell = undefined
+        this.initiate(startVector.copy())
     }
 
     static Step = class {
-        constructor(vector) {
+        constructor(trajectory, vector) {
             this.x = vector._xStart
             this.y = vector._yStart
-            this.len = Math.ceil(vector._len / Settings.ballSpeed)
+            this.length = Math.ceil(vector._len / Settings.ballSpeed)
             vector.len = Settings.ballSpeed
             this.dx = vector.dx
             this.dy = vector.dy
+            this.size = 1
+            this.dSize = -0.1
+
+            trajectory.push(this)
         }
     }
 
-    static initiate(game, cX, cY, sV, trajectory = []) {
-        const aX = Settings.ballSpawnX
-        const aY = Settings.ballSpawnY
-        const vector = sV.copy()
+    initiate(vector, possibleCells = undefined) {
+        const ballRadius = Settings.ballRadius
+        const ballCheckRadius = Settings.ballCheckRadius
+        const grid = this.game.grid
+        const xStart = vector._xStart
+        const yStart = vector._yStart
+        const xClick = vector._xEnd
+        let x = undefined
+        let y = undefined
 
-        let x = 0 // final coords
-        let y = 0
-
-        // check ball collision
-        // check empty cell around of fill cells
-        const possibleCells = new Map() // key - y of cell, value - set of empty cells
-        const fillCells = game.grid.cells.filter((cell) => Boolean(cell.ball))
-        for (const cell of fillCells) {
-            const emptyCells = game.grid
-                .getCellsAround(cell)
-                .filter((cell) => !Boolean(cell.ball))
-            emptyCells.forEach((cell) => {
-                let setOfCells = possibleCells.get(cell.y)
-                setOfCells = Boolean(setOfCells) ? setOfCells : new Set()
-                setOfCells.add(cell)
-                possibleCells.set(cell.y, setOfCells)
-            })
-        }
-        // add empty cells from 1 line
-        game.grid.cellByRow[0].forEach((cell) => {
-            if (!cell.ball) {
-                let setOfCells = possibleCells.get(cell.y)
-                setOfCells = Boolean(setOfCells) ? setOfCells : new Set()
-                possibleCells.set(cell.y, setOfCells)
-            }
-        })
-
-        const sortedPossibleCells = new Map(
-            [...possibleCells].sort((a, b) => Boolean(a[0] - b[0]))
-        )
-        const checkRadius = Settings.ballCheckRadius
-
-        for (const elem of sortedPossibleCells) {
-            y = elem[0]
-            const row = elem[1]
-
-            vector.yEnd = y
-            x = vector._xEnd
-            if (
-                !(
-                    Settings.ballRadius <
-                    x <
-                    Settings.fieldWidth - Settings.ballRadius
-                )
-            ) {
-                break
-            }
-
-            for (const cell of row) {
-                if (cell.x - checkRadius < x && x < cell.x + checkRadius) {
-                    const step = new Trajectory.Step(vector)
-                    trajectory.push(step)
-                    return trajectory
+        if (!possibleCells) {
+            // get a possible cells
+            const firstRowIndex =
+                grid.matrix.filter((rowList) => Boolean(rowList[0].y <= yStart)).pop()[0].row + 1
+            possibleCells = grid.matrix.slice(0, firstRowIndex + 1).map(() => new Set())
+            const checkingCells = new Set(grid.matrix[0].concat(Array.from(grid.fillCells)))
+            for (let cell of checkingCells) {
+                for (let adjacentCell of grid.getCellsAround(cell)) {
+                    if (adjacentCell.row > firstRowIndex) continue
+                    else if (adjacentCell.ball) checkingCells.add(adjacentCell)
+                    else possibleCells[adjacentCell.row].add(adjacentCell)
                 }
             }
         }
 
-        // check left side
-        if (aX - cX < 0) {
-            x = Settings.ballRadius
-            vector.xEnd = x
-            y = vector._yEnd
-            if (Settings.fieldHeight < y && y < Settings.ballRadius) {
-                const step = new Trajectory.Step(vector)
-                trajectory.push(step)
+        // check hitting a cell
+        for (let line of possibleCells.reverse()) {
+            if (line.size === 0) continue
+            x = undefined
+            for (let cell of line) {
+                if (!x) {
+                    // set end point of vector
+                    vector.yEnd = cell.y
+                    x = vector._xEnd
+                }
+                const outSide = ballRadius > x || x > Settings.fieldWidth - ballRadius
+                const outCheck = cell.x + ballCheckRadius < x || x < cell.x - ballCheckRadius
+                if (outSide) break
+                if (outCheck) continue
 
-                sV.reflectByX()
-                sV.xStart = vector._xEnd
-                sV.yStart = vector._yEnd
-
-                return Trajectory.initiate(
-                    game,
-                    sV._xEnd,
-                    sV._yEnd,
-                    sV,
-                    (trajectory = [])
-                )
-            }
-        }
-        // right side
-        if (aX - cX > 0) {
-            x = Settings.fieldHeight - Settings.ballRadius
-            vector.xEnd = x
-            y = vector._yEnd
-            if (Settings.fieldHeight < y && y < Settings.ballRadius) {
-                const step = new Trajectory.Step(vector)
-                trajectory.push(step)
-
-                sV.reflectByX()
-                sV.xStart = vector._xEnd
-                sV.yStart = vector._yEnd
-
-                return Trajectory.initiate(
-                    game,
-                    sV._xEnd,
-                    sV._yEnd,
-                    sV,
-                    (trajectory = [])
-                )
+                const pullVector = new Vector(vector._xEnd, vector._yEnd, cell.x, cell.y)
+                new Trajectory.Step(this.trajectory, vector.copy()) // move the ball to the row
+                new Trajectory.Step(this.trajectory, pullVector) // move the ball to the cell
+                this.cell = cell
+                return
             }
         }
 
-        return []
+        // check sides
+        const outLeft = xStart - xClick > 0
+        const outRight = xStart - xClick < 0
+        if (outLeft || outRight) {
+            x = outLeft ? Settings.ballRadius : Settings.fieldWidth - Settings.ballRadius
+            vector.xEnd = x
+            y = vector._yEnd
+            const outSide = vector.dy >= 0
+            if (outSide) return
+            new Trajectory.Step(this.trajectory, vector)
+            vector.xStart = x
+            vector.yStart = y
+            vector.reflectByX()
+            this.initiate(vector, possibleCells)
+        }
     }
 
-    getObjectForMessage() {
+    getRenderObject() {
         const trajectory = []
         this.trajectory.forEach((step) => {
             trajectory.push({
                 x: step.x,
                 y: step.y,
-                len: step.len,
+                length: step.length,
                 dx: step.dx,
-                dy: step.dy
+                dy: step.dy,
+                size: step.size,
+                dSize: step.dSize
             })
         })
         return trajectory
@@ -940,20 +848,28 @@ function getRandomInt(min = 0, max = 10) {
     return Math.floor(Math.random() * (max - min + 1)) + min
 }
 
-onmessage = function (event) {
-    let game = Game.game
-    const action = event.data.message
-    const parameter = event.data.parameter
+let game = undefined
 
-    if (action === Message.startGame) {
-        game = new Game()
-        game.currentEvent.do() // add lines of ball
-    } else if (
-        action === Message.clickOnField &&
-        game.currentEvent instanceof GameEvent.Aiming
-    ) {
-        game.currentEvent.do(parameter) // aiming
+onmessage = function (event) {
+    const { action, attachment } = event.data
+
+    switch (true) {
+        case action === 'start_game':
+            game = new Game()
+            game.currentEvent.do()
+            break
+        case action === 'on_click':
+        case game.currentEvent instanceof GameEvent.Aiming:
+            game.currentEvent.do(attachment)
+            break
+        case action === 'animation_complete':
+        case game.currentEvent instanceof GameEvent.WaitAnimation:
+            game.currentEvent.do(attachment) // complete wait event
+            game.currentEvent.do(attachment) // do next event
+            break
+        default:
+            return
     }
 
-    postMessage(game.getRenderObjects())
+    postMessage(new Message('to_render', game.getRenderObjects()))
 }

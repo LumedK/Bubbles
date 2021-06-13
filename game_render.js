@@ -1,4 +1,4 @@
-import { Settings, Massage, GameObject } from './game_worker.js'
+import { Settings, Message, GameObject } from './game_worker.js'
 
 class Images {
     static getImage(src) {
@@ -22,19 +22,18 @@ class Field {
         this.clickX = -1
         this.clickY = -1
 
-        Field.canvas.width = Settings.fieldWidth
-        Field.canvas.height = Settings.fieldHeight
-        Field.canvas.addEventListener('mousemove', this.clickEvent)
-        Field.canvas.addEventListener('click', this.clickEvent)
+        this.canvas = document.getElementById('gameField')
+        this.ctx = this.canvas.getContext('2d')
+        this.canvas.width = Settings.fieldWidth
+        this.canvas.height = Settings.fieldHeight
+        this.canvas.addEventListener('mousemove', this.mouseEvent.bind(this))
+        this.canvas.addEventListener('click', this.clickEvent.bind(this))
     }
-
-    static canvas = document.getElementById('gameField')
-    static ctx = Field.canvas.getContext('2d')
 
     translateCursor(layerX, layerY) {
         return {
-            x: (Field.canvas.width / Field.canvas.offsetWidth) * layerX,
-            y: (Field.canvas.height / Field.canvas.offsetHeight) * layerY
+            x: (this.canvas.width / this.canvas.offsetWidth) * layerX,
+            y: (this.canvas.height / this.canvas.offsetHeight) * layerY
         }
     }
 
@@ -48,14 +47,15 @@ class Field {
         const cursorXY = this.translateCursor(event.layerX, event.layerY)
         this.clickX = cursorXY.x
         this.clickY = cursorXY.y
+        new Message('on_click', cursorXY).post()
     }
 }
 
 class Render {
-    constructor(field) {
+    constructor(field, list = []) {
         this.field = field
-        this.list = []
-        this.interval = setInterval(this.run, 1000 / Settings.maxFps)
+        this.list = list
+        this.interval = setInterval(this.run.bind(this), 1000 / Settings.maxFps)
 
         this.fps = {
             counter: 0,
@@ -74,38 +74,59 @@ class Render {
     }
 
     run() {
+        function haveAnimation(renderObject) {
+            return Boolean(renderObject.trajectory) // or animation
+        }
         const field = this.field
+        let animationComplete = undefined
 
         field.ctx.clearRect(0, 0, field.canvas.width, field.canvas.height)
 
-        for (renderObject of this.list) {
+        for (let renderObject of this.list) {
             try {
                 const objectType = renderObject.type
                 const gameObject = GameObject[objectType]
-                const image = Images[objectType]
+                const image = Images[renderObject.imageName]
+                const objectHaveAnimation = haveAnimation(renderObject)
 
                 gameObject.render(renderObject, field, image)
+
+                if (objectHaveAnimation) {
+                    animationComplete =
+                        animationComplete === undefined
+                            ? !haveAnimation(renderObject)
+                            : animationComplete && !haveAnimation(renderObject)
+                }
             } catch (error) {
                 console.log('render error', error)
                 continue
             }
         }
 
-        field.fps.show()
+        if (animationComplete) {
+            new Message('animation_complete').post()
+        }
+
+        this.fps.show()
     }
 }
 
-function onmessage(message) {}
+function onmessage(event) {
+    const message = event.data
+    if (message.action === 'to_render') {
+        render.list = message.attachment
+    }
+}
 
 // INITIALIZATION
 const field = new Field()
 const render = new Render(field)
 
-Massage.worker = new Worker('game_worker.js', { type: 'module' })
-Massage.onmessage = onmessage
+Message.worker = new Worker('game_worker.js', { type: 'module' })
+Message.onmessage = onmessage
 
 // RUN
-const massage = new Massage('start_game')
+new Message('start_game').post()
 
 //*
 //*
