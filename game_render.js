@@ -1,47 +1,69 @@
-import { Settings, Message } from './game_worker.js'
+import { Settings, AbstractRender, message } from './game_worker.js'
 
-const field = {
-    cursorX: -1,
-    cursorY: -1,
-    clickX: -1,
-    clickY: -1,
-    canvas: document.getElementById('gameField'),
-    ctx: this.canvas.getContext('2d'),
+class Images {
+    static getImage(src) {
+        const image = new Image()
+        image.src = src
+        return image
+    }
+    static aim_arrow = Images.getImage('img/aim_arrow.png')
+    // static bubble_1 = Images.getImage('img/cat.png')
+    // static bubble_2 = Images.getImage('img/ghost.png')
+    // static bubble_3 = Images.getImage('img/demon.png')
+    // static bubble_4 = Images.getImage('img/pumpkin.png')
+    // static bubble_5 = Images.getImage('img/vampire.png')
+    // static bubble_6 = Images.getImage('img/zombie.png')
+}
 
-    initiated: (() => {
+class Field {
+    constructor() {
+        this.cursorX = Settings.bubbleSpawnX
+        this.cursorY = -1
+        this.clickX = Settings.bubbleSpawnX
+        this.clickY = -1
+
+        this.Images = Images
+
+        this.canvas = document.getElementById('gameField')
+        this.ctx = this.canvas.getContext('2d')
         this.canvas.width = Settings.fieldWidth
         this.canvas.height = Settings.fieldHeight
-        this.canvas.addEventListener('mousemove', this.mouseEvent.bind(this))
-        this.canvas.addEventListener('click', this.clickEvent.bind(this))
-        return true
-    })(),
+        this.canvas.addEventListener('mousemove', this.onCursorMove.bind(this))
+        this.canvas.addEventListener('click', this.onClick.bind(this))
+    }
 
     translateCursor(layerX, layerY) {
         return {
             x: (this.canvas.width / this.canvas.offsetWidth) * layerX,
             y: (this.canvas.height / this.canvas.offsetHeight) * layerY
         }
-    },
+    }
 
-    mouseEvent(event) {
+    onCursorMove(event) {
         const cursorXY = this.translateCursor(event.layerX, event.layerY)
         this.cursorX = cursorXY.x
         this.cursorY = cursorXY.y
-    },
+    }
 
-    clickEvent(event) {
+    onClick(event) {
         const cursorXY = this.translateCursor(event.layerX, event.layerY)
         this.clickX = cursorXY.x
         this.clickY = cursorXY.y
-        if (workerExpect.has('on_click')) {
-            workerExpect.delete('on_click')
-            new Message('on_click', cursorXY).post()
+        if (gameRender.workerResult === 'waiting_for_click') {
+            worker.postMessage(message('click', cursorXY))
         }
     }
 }
 
-Message.worker = new Worker('game_worker.js', { type: 'module' })
-Message.onmessage = function (event) {}
+const gameRender = new AbstractRender.GameRender()
+gameRender.field = new Field()
+gameRender.interval = setInterval(gameRender.run.bind(gameRender), 1000 / Settings.maxFps)
 
-// Start
-new Message('start_new_game').post()
+const worker = new Worker('game_worker.js', { type: 'module' })
+worker.onmessage = function (event) {
+    const { workerResult, renderDataList } = event.data
+    gameRender.workerResult = workerResult
+    gameRender.renderDataList = renderDataList
+}
+
+worker.postMessage(message('start_new_game'))
