@@ -1,4 +1,8 @@
-import { Settings, AbstractRender, message } from './game_worker.js'
+function onWorkerMessage(params) {
+    console.log('onWorkerMessage')
+}
+
+import { Settings, MainstreamStuff, message } from './game_worker.js'
 
 class Images {
     static getImage(src) {
@@ -49,21 +53,22 @@ class Field {
         const cursorXY = this.translateCursor(event.layerX, event.layerY)
         this.clickX = cursorXY.x
         this.clickY = cursorXY.y
-        if (gameRender.workerResult === 'waiting_for_click') {
+        if (MainstreamStuff.workerMessage === 'waiting_for_click') {
             worker.postMessage(message('click', cursorXY))
         }
     }
 }
 
-const gameRender = new AbstractRender.GameRender()
+const gameRender = new MainstreamStuff.Renders.GameRender()
 gameRender.field = new Field()
 gameRender.interval = setInterval(gameRender.run.bind(gameRender), 1000 / Settings.maxFps)
 
 const worker = new Worker('game_worker.js', { type: 'module' })
 worker.onmessage = function (event) {
-    const { workerResult, renderDataList } = event.data
-    gameRender.workerResult = workerResult
-    gameRender.renderDataList = renderDataList
+    const { workerMessage, workerData } = event.data
+    MainstreamStuff.onWorkerMessage(workerMessage)
+    //gameRender.workerMessage = workerMessage
+    gameRender.renderDataList = workerData.renderDataList
 }
 
 worker.postMessage(message('start_new_game'))

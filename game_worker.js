@@ -134,9 +134,62 @@ class ShootBubble {
         // Game.game.nextBubble.type = Bubble.getRandomType()
     }
 
+    static setAnimation() {
+        this.getWayList()
+        const lastVector = this.wayList[this.wayList.length - 1]
+        this.addToWayList(
+            new Vector(
+                lastVector.endPointX,
+                lastVector.endPointY,
+                this.staticBubble.x,
+                this.staticBubble.y
+            )
+        )
+
+        return new RenderBubbleWayAnimation(this.wayList)
+    }
+
     static addToWayList(vector) {
         const way = vector.copy()
         this.wayList.push(way)
+    }
+
+    static getStaticBubble(line, aimVector) {
+        let x = 0
+        const y = line[0].y
+        let outLeft = false
+        let outRight = false
+
+        function checkOutSide(aimVector) {
+            aimVector.setEndPointByY(y).endPointX
+            x = aimVector.setEndPointByY(y).endPointX
+            outLeft = x < Settings.bubbleRadius
+            outRight = x > Settings.fieldWidth - Settings.bubbleRadius
+        }
+
+        checkOutSide(aimVector)
+        while (outLeft || outRight) {
+            // set a vector's end point (across vertical sides)
+            const xSide = outLeft
+                ? Settings.bubbleRadius
+                : Settings.fieldWidth - Settings.bubbleRadius
+            aimVector.setEndPointByX(xSide)
+            // add this vector to the way list
+            this.addToWayList(aimVector)
+            // move and reflect the vector at the side point
+            aimVector.moveTo(aimVector.endPointX, aimVector.endPointY)
+            aimVector.reflectByX()
+            // check 'outLeft' and 'outRight'
+            checkOutSide(aimVector)
+        }
+
+        // the 'x' is inside a line
+        for (let staticBubble of line) {
+            const isXInsideBubble =
+                staticBubble.x - Settings.bubbleRadius <= x &&
+                x <= staticBubble.x + Settings.bubbleRadius
+            if (isXInsideBubble) return staticBubble
+        }
     }
 
     static getWayList() {
@@ -153,106 +206,67 @@ class ShootBubble {
             aimVector.angle = Settings.minAimAngleRad * (clickAngle < 0 ? -1 : 1)
         }
 
-        this.staticBubble = undefined
         for (let line of StaticBubble.matrix.slice().reverse()) {
-            const y = line[0].y
-            const x = aimVector.setEndPointByY(y).endPointX
-            const outLeft = x < Settings.bubbleRadius
-            const outRight = x > Settings.fieldWidth - Settings.bubbleRadius
+            const staticBubble = this.getStaticBubble(line, aimVector)
 
-            if (outLeft || outRight) {
-                while (true) {
-                    const xSidePoint = outLeft
-                        ? Settings.bubbleRadius
-                        : Settings.fieldWidth - Settings.bubbleRadius
-                    aimVector.setEndPointByX(xSidePoint)
-
-                    if (aimVector.endPointY <= y) break
-
-                    this.addToWayList(aimVector)
-                    aimVector.moveTo(aimVector.endPointX, aimVector.endPointY)
-                    aimVector.reflectByX()
+            const isEmptyBubble = !staticBubble.type
+            // While game is running, the bottom line should have empty bubbles
+            if (!isEmptyBubble) {
+                aimVector.setEndPointByY(this.staticBubble.y)
+                //<bug fix>: When the vector was reflected and the point on the new line was rejected, the direction of the vector became incorrect
+                if (aimVector.dy > 0) {
+                    aimVector = this.wayList.pop()
+                    aimVector.setEndPointByX(this.staticBubble.x)
                 }
-
-                // get side point
-                // reflect
-
-                // while (true) {
-                //     const xReflect = outLeft
-                //         ? Settings.bubbleRadius
-                //         : Settings.fieldWidth - Settings.bubbleRadius
-                //     aimVector.setEndPointByX(xReflect)
-                //     this.addToWayList(aimVector)
-                //     aimVector.moveTo(aimVector.endPointX, aimVector.endPointY)
-                //     aimVector.reflectByX()
-                //     if (aimVector.endPointY <= y) break
-                // }
+                //</bug fix>
+                this.addToWayList(aimVector)
+                return
             }
 
-            for (let bubble of line) {
-                const inBubbleArea =
-                    bubble.x - Settings.bubbleRadius <= x && x <= bubble.x + Settings.bubbleRadius
-                const isEmptyBubble = !bubble.type
+            this.staticBubble = staticBubble
 
-                if (!inBubbleArea) {
-                    continue
-                } else if (!isEmptyBubble) {
-                    aimVector.setEndPointByY(this.staticBubble.y)
-                    this.addToWayList(aimVector)
-                    return
-                }
-                // inBubbleArea && isEmptyBubble
-                const isLeftBubbleInHitRange =
-                    bubble.column > 0 &&
-                    StaticBubble.matrix[bubble.row][bubble.column - 1].x +
-                        Settings.bubbleHitRange >=
-                        bubble.x
+            const isLeftBubbleInHitRange =
+                staticBubble.column > 0 &&
+                StaticBubble.matrix[staticBubble.row][staticBubble.column - 1].x +
+                    Settings.bubbleHitRange >=
+                    staticBubble.x
+            const isRightBubbleInHitRange =
+                staticBubble.column < Settings.columns - 1 &&
+                StaticBubble.matrix[staticBubble.row][staticBubble.column + 1].x -
+                    Settings.bubbleHitRange <=
+                    staticBubble.x
 
-                const isRightBubbleInHitRange =
-                    bubble.column < Settings.columns - 1 &&
-                    StaticBubble.matrix[bubble.row][bubble.column + 1].x -
-                        Settings.bubbleHitRange <=
-                        bubble.x
-
-                if (isLeftBubbleInHitRange || isRightBubbleInHitRange) {
-                    this.staticBubble = bubble
-                    aimVector.setEndPointByY(bubble.y)
-                    this.addToWayList(aimVector)
-                    return
-                }
-
-                this.staticBubble = bubble
+            if (isLeftBubbleInHitRange || isRightBubbleInHitRange) {
+                aimVector.setEndPointByY(staticBubble.y)
+                this.addToWayList(aimVector)
+                return
             }
         }
     }
+}
 
-    static setAnimation() {
-        this.getWayList()
-        const lastVector = this.wayList[this.wayList.length - 1]
-        this.addToWayList(
-            new Vector(
-                lastVector.endPointX,
-                lastVector.endPointY,
-                this.staticBubble.x,
-                this.staticBubble.y
-            )
-        )
-
-        return new RenderBubbleWayAnimation(this.wayList)
+export class MainstreamStuff {
+    static Renders = {}
+    static workerMessage = ''
+    static onWorkerMessage(workerMessage) {
+        MainstreamStuff.workerMessage = workerMessage
     }
 }
 
 // Renders
 
-export class AbstractRender {
-    static #init = (() => {})()
+class AbstractRender {
+    static init = (subRender) => {
+        MainstreamStuff.Renders[subRender.name] = subRender
+    }
     static getRenderData() {}
     static draw() {}
 }
 
 class GameRender extends AbstractRender {
     static #init = (() => {
-        AbstractRender.GameRender = GameRender
+        super.init(this)
+        //AbstractRender.GameRender = GameRender
     })()
 
     constructor() {
@@ -272,7 +286,9 @@ class GameRender extends AbstractRender {
         for (const renderData of this.renderDataList) {
             this.constructor.onRender(renderState)
             try {
-                const render = this.constructor[renderData.Render]
+                // const render = this.constructor[renderData.Render]
+                const render = MainstreamStuff.Renders[renderData.Render]
+
                 render.draw(this.field, renderData)
             } catch (error) {
                 console.log('render error', error)
@@ -290,7 +306,9 @@ class GameRender extends AbstractRender {
 
 class FPSRender extends GameRender {
     static #init = (() => {
-        GameRender.FPSRender = FPSRender
+        super.init(this)
+        // GameRender.FPSRender = FPSRender
+
         const afterRender = GameRender.afterRender
         GameRender.afterRender = function (renderState) {
             afterRender(renderState)
@@ -318,7 +336,8 @@ class FPSRender extends GameRender {
 
 class BubbleRender extends AbstractRender {
     static #init = (() => {
-        AbstractRender.BubbleRender = BubbleRender
+        super.init(this)
+        // AbstractRender.BubbleRender = BubbleRender
     })()
 
     static getRenderData(bubble) {
@@ -352,7 +371,7 @@ class BubbleRender extends AbstractRender {
 
     static draw(field, renderData) {
         if (renderData.animation) {
-            AbstractRender[renderData.animation.Render].draw(field, renderData)
+            MainstreamStuff.Renders[renderData.animation.Render].draw(field, renderData)
         }
 
         const ctx = field.ctx
@@ -366,7 +385,8 @@ class BubbleRender extends AbstractRender {
 
 class AimArrowRender extends AbstractRender {
     static #init = (() => {
-        AbstractRender.AimArrowRender = AimArrowRender
+        super.init(this)
+        // AbstractRender.AimArrowRender = AimArrowRender
     })()
 
     static getRenderData(aimArrow) {
@@ -405,8 +425,32 @@ class AimArrowRender extends AbstractRender {
 
 class RenderBubbleWayAnimation extends AbstractRender {
     static #init = (() => {
-        AbstractRender.RenderBubbleWayAnimation = RenderBubbleWayAnimation
+        super.init(this)
+
+        const afterRender = GameRender.afterRender
+        GameRender.afterRender = function (renderState) {
+            afterRender(renderState)
+            RenderBubbleWayAnimation.afterRender(renderState)
+        }
+
+        const onWorkerMessage = MainstreamStuff.onWorkerMessage
+        MainstreamStuff.onWorkerMessage = function (workerMessage) {
+            onWorkerMessage(workerMessage)
+            RenderBubbleWayAnimation.onWorkerMessage(workerMessage)
+        }
     })()
+
+    static drawingState = {
+        haveAnimation: false,
+        isAnimationComplete: true,
+        isGameWaitingAnimation: false,
+
+        reset() {
+            this.haveAnimation = false
+            this.isAnimationComplete = true
+            this.isGameWaitingAnimation = false
+        }
+    }
 
     constructor(wayList) {
         super()
@@ -439,6 +483,8 @@ class RenderBubbleWayAnimation extends AbstractRender {
 
     static draw(field, renderData) {
         const animation = renderData.animation
+        const drawingState = this.drawingState
+        drawingState.reset()
 
         if (animation.count <= 0 && animation.steps.length === 0) {
             renderData.animation = undefined
@@ -456,6 +502,14 @@ class RenderBubbleWayAnimation extends AbstractRender {
         renderData.x += animation.dx
         renderData.y += animation.dy
         animation.count--
+    }
+
+    static onWorkerMessage(workerMessage) {
+        console.log('RenderBubbleWayAnimation.onWorkerMessage')
+    }
+
+    static afterRender(renderState) {
+        console.log('RenderBubbleWayAnimation.afterRender')
     }
 }
 
@@ -663,15 +717,15 @@ function getRandomInt(min = 0, max = 10) {
 
 onmessage = function (event) {
     const { command, attachment } = event.data
-    let workerResult = ''
+    let workerMessage = ''
     if (command === 'start_new_game') {
         new Game()
-        workerResult = 'waiting_for_click'
+        workerMessage = 'waiting_for_click'
     } else if (command === 'click') {
         Game.game.clickXY = attachment
-        workerResult = Game.game.loop.next().value
+        workerMessage = Game.game.loop.next().value
     }
 
-    const renderDataList = RenderObjects.getRenderData()
-    this.postMessage({ workerResult, renderDataList })
+    const workerData = { renderDataList: RenderObjects.getRenderData() }
+    this.postMessage({ workerMessage, workerData })
 }
