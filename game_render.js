@@ -2,7 +2,7 @@ function onWorkerMessage(params) {
     console.log('onWorkerMessage')
 }
 
-import { Settings, MainstreamStuff, message } from './game_worker.js'
+import { Settings, MainstreamStuff, messageToWorker } from './game_worker.js'
 
 class Images {
     static getImage(src) {
@@ -54,7 +54,7 @@ class Field {
         this.clickX = cursorXY.x
         this.clickY = cursorXY.y
         if (MainstreamStuff.currentWorkerMessage === 'waiting_for_click') {
-            MainstreamStuff.worker.postMessage(message('click', cursorXY))
+            MainstreamStuff.worker.postMessage(messageToWorker('click', cursorXY))
         }
     }
 }
@@ -70,4 +70,4 @@ MainstreamStuff.worker.onmessage = function (event) {
     gameRender.renderDataList = workerData.renderDataList
 }
 
-MainstreamStuff.worker.postMessage(message('start_new_game'))
+MainstreamStuff.worker.postMessage(messageToWorker('start_new_game'))

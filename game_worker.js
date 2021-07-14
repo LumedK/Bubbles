@@ -30,69 +30,81 @@ export class Settings {
     ] // ROW: possible balls; COLUMN: max lives; VALUE: number of adding lines
 }
 
-export function message(command = '', attachment) {
+export function messageToWorker(command = '', attachment) {
     return { command: command, attachment: attachment }
 }
 
-class Game {
-    static game = undefined
+function sendMessageToMainstream(workerMessage) {
+    const workerData = { renderDataList: RenderObjects.getRenderData() }
+    postMessage({ workerMessage, workerData })
+}
 
-    constructor() {
-        RenderObjects.objects = []
-        this.finished = false
-        new AimArrow()
-        this.aimBubble = new Bubble(Settings.bubbleSpawnX, Settings.bubbleSpawnY)
-        this.nextBubble = new Bubble(Settings.nextBubbleSpawnX, Settings.nextBubbleSpawnY)
-        this.lives = new Lives()
-        Game.game = this
-        StaticBubble.initiate()
-        this.clickXY = undefined
-        this.loop = this.#loop()
-        AddBubblesLines.completeAction()
-    }
-
-    #loop = function* () {
-        while (this && !this.finished) {
-            yield 'waiting_for_click'
-            ShootBubble.startAction()
-            yield 'waiting_for_complete_animation'
-            const hitBubble = ShootBubble.completeAction()
-        }
+export class MainstreamStuff {
+    static Renders = {}
+    static worker = undefined
+    static currentWorkerMessage = ''
+    static onWorkerMessage(workerMessage) {
+        MainstreamStuff.currentWorkerMessage = workerMessage
     }
 }
 
-class AddBubblesLines {
-    static completeAction() {
-        function getRandomTypeList() {
-            const list = []
-            if (numberOfNewBubbles === 0) return list
-            const differenceTypes = new Set()
-            const length = Bubble.possibleTypes.length
-            for (let i = 0; i < numberOfNewBubbles; i++) {
-                let type = Bubble.possibleTypes[getRandomInt(0, length - 1)]
-                list.push(type)
-                differenceTypes.add(type)
-            }
-            if (Game.game.aimBubble.type) differenceTypes.add(Game.game.aimBubble.type)
-
-            if (differenceTypes.size !== length) return getRandomTypeList()
-            return list
+class Game {
+    static #init = (() => {
+        const preOnWorkerMessage = onWorkerMessage
+        onWorkerMessage = function (command, attachment) {
+            preOnWorkerMessage(command, attachment)
+            Game.onWorkerMessage(command, attachment)
         }
+    })()
 
-        // const numberOfAddingLines = 15 // debug
-        const numberOfAddingLines =
-            Settings.addLineRule[Bubble.possibleTypes.length - 1][Game.game.lives.maxLives - 1]
+    static game = undefined
 
-        // Shift the bubbles
-        for (let bubble of StaticBubble.bubbles.slice().reverse()) {
-            if (!bubble.type) continue
-            const offsetBubbleRow = bubble.row + numberOfAddingLines
-            if (offsetBubbleRow > Settings.rows - 1) continue
-            let offsetBubble = StaticBubble.matrix[offsetBubbleRow][bubble.column]
-            if (offsetBubble.type) continue
-            offsetBubble.type = bubble.type
-            bubble.type = undefined
+    constructor() {
+        this.finished = false
+        this.aimBubble = undefined
+        this.nextBubble = undefined
+        this.lives = new Lives()
+        this.clickXY = undefined
+    }
+
+    initiate() {
+        Game.game = this
+        RenderObjects.objects = []
+        new AimArrow()
+        this.aimBubble = new Bubble(Settings.bubbleSpawnX, Settings.bubbleSpawnY)
+        this.nextBubble = new Bubble(Settings.nextBubbleSpawnX, Settings.nextBubbleSpawnY)
+        StaticBubble.initiate()
+    }
+
+    static onWorkerMessage(command, attachment) {
+        if (command === 'start_new_game') {
+            new Game().loop()
         }
+    }
+
+    async loop() {
+        const game = this
+        game.initiate()
+        AddBubblesLines.complete()
+        ShootBubble.complete()
+    }
+}
+
+// Game events
+
+class AbstractGameEvent {
+    static complete() {
+        this.sendRenderData()
+    }
+    static sendRenderData(workerMessage = 'event_complete') {
+        sendMessageToMainstream(workerMessage)
+    }
+}
+
+class AddBubblesLines extends AbstractGameEvent {
+    static complete() {
+        const numberOfAddingLines = this.getNumberOfAddingLines()
+        this.ShiftBubbles(numberOfAddingLines)
 
         let numberOfNewBubbles = 0
         for (let bubble of StaticBubble.bubbles) {
@@ -101,22 +113,91 @@ class AddBubblesLines {
             numberOfNewBubbles += 1
         }
 
-        // Get list of random types
-        const list = getRandomTypeList()
-
-        // Fill types of bubbles
+        const list = this.getRandomTypeList(numberOfNewBubbles)
         list.forEach((type, index) => {
             StaticBubble.bubbles[index].type = type
         })
 
-        return true
+        super.sendRenderData()
+    }
+
+    static getNumberOfAddingLines() {
+        return Settings.addLineRule[Bubble.possibleTypes.length - 1][Game.game.lives.maxLives - 1]
+    }
+
+    static ShiftBubbles(numberOfAddingLines) {
+        for (let bubble of StaticBubble.bubbles.slice().reverse()) {
+            if (!bubble.type) continue
+            const offsetBubbleRow = bubble.row + numberOfAddingLines
+            if (offsetBubbleRow > Settings.rows - 1) continue
+            let offsetBubble = StaticBubble.matrix[offsetBubbleRow][bubble.column]
+            if (offsetBubble.type) continue
+            offsetBubble.type = bubble.type
+            bubble.type = undefined
+            numberOfNewBubbles += 1
+        }
+    }
+
+    static getRandomTypeList(NumberOfShiftedBubbles) {
+        const list = []
+        if (NumberOfShiftedBubbles === 0) return list
+        const differenceTypes = new Set()
+        const length = Bubble.possibleTypes.length
+        for (let i = 0; i < NumberOfShiftedBubbles; i++) {
+            let type = Bubble.possibleTypes[getRandomInt(0, length - 1)]
+            list.push(type)
+            differenceTypes.add(type)
+        }
+        if (Game.game.aimBubble.type) differenceTypes.add(Game.game.aimBubble.type)
+
+        if (differenceTypes.size !== length) return getRandomTypeList()
+        return list
     }
 }
 
-class ShootBubble {
+class ShootBubble extends AbstractGameEvent {
+    static #init = (() => {
+        const preOnWorkerMessage = onWorkerMessage
+        onWorkerMessage = function (command, attachment) {
+            preOnWorkerMessage(command, attachment)
+            ShootBubble.onWorkerMessage(command, attachment)
+        }
+    })()
+
+    static onWorkerMessage(command, attachment) {
+        if (command === 'click') {
+            this.resolve()
+        }
+    }
+
+    static resolve
+
     static bubble
     static staticBubble
     static wayList = []
+
+    static complete() {
+        const waitForClick = new Promise((resolve, reject) => {
+            this.resolve = resolve
+            sendMessageToMainstream('waiting_for_click')
+        })
+
+        waitForClick.then(this.startAction)
+
+        // this.startAction()
+        // const promise = new Promise((resolve, reject) => {
+        //     this.resolve = resolve
+        //     super.sendRenderData()
+        // })
+        // promise.then(this.finishAction)
+        // super.sendRenderData()
+    }
+
+    //************************
+
+    // static bubble
+    // static staticBubble
+    // static wayList = []
 
     static startAction() {
         const aimBubble = Game.game.aimBubble
@@ -127,7 +208,7 @@ class ShootBubble {
         this.bubble.animation = this.setAnimation()
     }
 
-    static completeAction() {
+    static finishAction() {
         this.staticBubble.type = this.bubble.type
         this.bubble = undefined
         Game.game.aimBubble.type = Game.game.nextBubble.type
@@ -243,15 +324,6 @@ class ShootBubble {
                 return
             }
         }
-    }
-}
-
-export class MainstreamStuff {
-    static Renders = {}
-    static worker = undefined
-    static currentWorkerMessage = ''
-    static onWorkerMessage(workerMessage) {
-        MainstreamStuff.currentWorkerMessage = workerMessage
     }
 }
 
@@ -716,19 +788,21 @@ function getRandomInt(min = 0, max = 10) {
 
 onmessage = function (event) {
     const { command, attachment } = event.data
-    let workerMessage = ''
-    if (command === 'start_new_game') {
-        new Game()
-        workerMessage = 'waiting_for_click'
-    } else if (command === 'click') {
-        Game.game.clickXY = attachment
-        workerMessage = Game.game.loop.next().value
-    } else if (command === 'animation_complete') {
-        workerMessage = Game.game.loop.next().value
-    }
+    onWorkerMessage(command, attachment)
 
-    const workerData = { renderDataList: RenderObjects.getRenderData() }
-    this.postMessage({ workerMessage, workerData })
+    // let workerMessage = ''
+    // if (command === 'start_new_game') {
+    //     new Game()
+    //     workerMessage = 'waiting_for_click'
+    // } else if (command === 'click') {
+    //     Game.game.clickXY = attachment
+    //     workerMessage = Game.game.loop.next().value
+    // } else if (command === 'animation_complete') {
+    //     workerMessage = Game.game.loop.next().value
+    // }
+
+    // const workerData = { renderDataList: RenderObjects.getRenderData() }
+    // this.postMessage({ workerMessage, workerData })
 }
 
-// TODO: переписать Game.loop используя async await
+function onWorkerMessage(command, attachment) {}
