@@ -53,10 +53,10 @@ class Game {
 
     #loop = function* () {
         while (this && !this.finished) {
-            // if (AddBubblesLines.completed()) yield 'waiting_for_click'
+            yield 'waiting_for_click'
             ShootBubble.startAction()
             yield 'waiting_for_complete_animation'
-            ShootBubble.completeAction()
+            const hitBubble = ShootBubble.completeAction()
         }
     }
 }
@@ -79,9 +79,9 @@ class AddBubblesLines {
             return list
         }
 
-        const numberOfAddingLines = 15 // debug
-        // const numberOfAddingLines =
-        //     Settings.addLineRule[Bubble.possibleTypes.length - 1][Game.game.lives.maxLives - 1]
+        // const numberOfAddingLines = 15 // debug
+        const numberOfAddingLines =
+            Settings.addLineRule[Bubble.possibleTypes.length - 1][Game.game.lives.maxLives - 1]
 
         // Shift the bubbles
         for (let bubble of StaticBubble.bubbles.slice().reverse()) {
@@ -117,6 +117,7 @@ class ShootBubble {
     static bubble
     static staticBubble
     static wayList = []
+
     static startAction() {
         const aimBubble = Game.game.aimBubble
         this.bubble = new Bubble(aimBubble.x, aimBubble.y)
@@ -127,11 +128,11 @@ class ShootBubble {
     }
 
     static completeAction() {
-        // staticBubble.type = this.bubble.type
-        // this.bubble = undefined
-        // staticBubble.type = undefined
-        // Game.game.aimBubble.type = Game.game.nextBubble.type
-        // Game.game.nextBubble.type = Bubble.getRandomType()
+        this.staticBubble.type = this.bubble.type
+        this.bubble = undefined
+        Game.game.aimBubble.type = Game.game.nextBubble.type
+        Game.game.nextBubble.type = Bubble.getRandomType()
+        return this.staticBubble
     }
 
     static setAnimation() {
@@ -247,9 +248,10 @@ class ShootBubble {
 
 export class MainstreamStuff {
     static Renders = {}
-    static workerMessage = ''
+    static worker = undefined
+    static currentWorkerMessage = ''
     static onWorkerMessage(workerMessage) {
-        MainstreamStuff.workerMessage = workerMessage
+        MainstreamStuff.currentWorkerMessage = workerMessage
     }
 }
 
@@ -337,7 +339,6 @@ class FPSRender extends GameRender {
 class BubbleRender extends AbstractRender {
     static #init = (() => {
         super.init(this)
-        // AbstractRender.BubbleRender = BubbleRender
     })()
 
     static getRenderData(bubble) {
@@ -386,7 +387,6 @@ class BubbleRender extends AbstractRender {
 class AimArrowRender extends AbstractRender {
     static #init = (() => {
         super.init(this)
-        // AbstractRender.AimArrowRender = AimArrowRender
     })()
 
     static getRenderData(aimArrow) {
@@ -440,17 +440,8 @@ class RenderBubbleWayAnimation extends AbstractRender {
         }
     })()
 
-    static drawingState = {
-        haveAnimation: false,
-        isAnimationComplete: true,
-        isGameWaitingAnimation: false,
-
-        reset() {
-            this.haveAnimation = false
-            this.isAnimationComplete = true
-            this.isGameWaitingAnimation = false
-        }
-    }
+    static isAnimationComplete = true
+    static isWaitingForAnimation = false
 
     constructor(wayList) {
         super()
@@ -484,7 +475,8 @@ class RenderBubbleWayAnimation extends AbstractRender {
     static draw(field, renderData) {
         const animation = renderData.animation
         const drawingState = this.drawingState
-        drawingState.reset()
+
+        this.isAnimationComplete = true
 
         if (animation.count <= 0 && animation.steps.length === 0) {
             renderData.animation = undefined
@@ -502,14 +494,21 @@ class RenderBubbleWayAnimation extends AbstractRender {
         renderData.x += animation.dx
         renderData.y += animation.dy
         animation.count--
+
+        this.isAnimationComplete = false
     }
 
     static onWorkerMessage(workerMessage) {
-        console.log('RenderBubbleWayAnimation.onWorkerMessage')
+        if (workerMessage === 'waiting_for_complete_animation') {
+            this.isAnimationComplete = true
+            this.isWaitingForAnimation = true
+        }
     }
 
     static afterRender(renderState) {
-        console.log('RenderBubbleWayAnimation.afterRender')
+        if (this.isWaitingForAnimation && this.isAnimationComplete) {
+            MainstreamStuff.worker.postMessage(message('animation_complete'))
+        }
     }
 }
 
@@ -524,12 +523,12 @@ class RenderObjects {
 
     static getRenderData() {
         const renderDataList = []
-        RenderObjects.objects.forEach((object) => {
+        for (const object of RenderObjects.objects) {
+            if (!object) continue
             const renderData = object.Render.getRenderData(object)
-            if (renderData) {
-                renderDataList.push(object.Render.getRenderData(object))
-            }
-        })
+            if (!renderData) continue
+            renderDataList.push(object.Render.getRenderData(object))
+        }
 
         return renderDataList
     }
@@ -724,8 +723,12 @@ onmessage = function (event) {
     } else if (command === 'click') {
         Game.game.clickXY = attachment
         workerMessage = Game.game.loop.next().value
+    } else if (command === 'animation_complete') {
+        workerMessage = Game.game.loop.next().value
     }
 
     const workerData = { renderDataList: RenderObjects.getRenderData() }
     this.postMessage({ workerMessage, workerData })
 }
+
+// TODO: переписать Game.loop используя async await

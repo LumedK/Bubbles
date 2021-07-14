@@ -53,8 +53,8 @@ class Field {
         const cursorXY = this.translateCursor(event.layerX, event.layerY)
         this.clickX = cursorXY.x
         this.clickY = cursorXY.y
-        if (MainstreamStuff.workerMessage === 'waiting_for_click') {
-            worker.postMessage(message('click', cursorXY))
+        if (MainstreamStuff.currentWorkerMessage === 'waiting_for_click') {
+            MainstreamStuff.worker.postMessage(message('click', cursorXY))
         }
     }
 }
@@ -63,12 +63,11 @@ const gameRender = new MainstreamStuff.Renders.GameRender()
 gameRender.field = new Field()
 gameRender.interval = setInterval(gameRender.run.bind(gameRender), 1000 / Settings.maxFps)
 
-const worker = new Worker('game_worker.js', { type: 'module' })
-worker.onmessage = function (event) {
+MainstreamStuff.worker = new Worker('game_worker.js', { type: 'module' })
+MainstreamStuff.worker.onmessage = function (event) {
     const { workerMessage, workerData } = event.data
     MainstreamStuff.onWorkerMessage(workerMessage)
-    //gameRender.workerMessage = workerMessage
     gameRender.renderDataList = workerData.renderDataList
 }
 
-worker.postMessage(message('start_new_game'))
+MainstreamStuff.worker.postMessage(message('start_new_game'))
