@@ -64,7 +64,7 @@ class Game {
         this.aimBubble = undefined
         this.nextBubble = undefined
         this.lives = new Lives()
-        this.clickXY = undefined
+        // this.clickXY = undefined
     }
 
     initiate() {
@@ -85,8 +85,11 @@ class Game {
     async loop() {
         const game = this
         game.initiate()
+
         AddBubblesLines.complete()
-        ShootBubble.complete()
+        const staticBubble = await ShootBubble.complete()
+
+        // pop bubbles
     }
 }
 
@@ -166,53 +169,51 @@ class ShootBubble extends AbstractGameEvent {
 
     static onWorkerMessage(command, attachment) {
         if (command === 'click') {
-            this.resolve()
+            this.clickXY = attachment
+            this.onClick()
+        }
+
+        if (command === 'animation_complete') {
+            this.onBubbleWayAnimationComplete()
         }
     }
 
-    static resolve
+    static clickXY = undefined
+    static onClick() {}
+    static onBubbleWayAnimationComplete() {}
 
     static bubble
     static staticBubble
     static wayList = []
 
-    static complete() {
-        const waitForClick = new Promise((resolve, reject) => {
-            this.resolve = resolve
-            sendMessageToMainstream('waiting_for_click')
+    static async complete() {
+        // waiting for click
+        sendMessageToMainstream('waiting_for_click')
+        await new Promise((resolve, reject) => {
+            this.onClick = resolve
         })
 
-        waitForClick.then(this.startAction)
-
-        // this.startAction()
-        // const promise = new Promise((resolve, reject) => {
-        //     this.resolve = resolve
-        //     super.sendRenderData()
-        // })
-        // promise.then(this.finishAction)
-        // super.sendRenderData()
-    }
-
-    //************************
-
-    // static bubble
-    // static staticBubble
-    // static wayList = []
-
-    static startAction() {
+        // prepare stuff
         const aimBubble = Game.game.aimBubble
         this.bubble = new Bubble(aimBubble.x, aimBubble.y)
         this.bubble.type = aimBubble.type
         aimBubble.type = undefined
 
         this.bubble.animation = this.setAnimation()
-    }
 
-    static finishAction() {
+        // waiting for complete animation
+        await new Promise((resolve, reject) => {
+            sendMessageToMainstream('waiting_for_complete_animation')
+            this.onBubbleWayAnimationComplete = resolve
+        })
+
+        // complete action
         this.staticBubble.type = this.bubble.type
         this.bubble = undefined
         Game.game.aimBubble.type = Game.game.nextBubble.type
         Game.game.nextBubble.type = Bubble.getRandomType()
+
+        sendMessageToMainstream()
         return this.staticBubble
     }
 
@@ -275,7 +276,7 @@ class ShootBubble extends AbstractGameEvent {
     }
 
     static getWayList() {
-        const clickXY = Game.game.clickXY
+        const clickXY = this.clickXY
 
         let aimVector = new Vector(
             Settings.bubbleSpawnX,
@@ -546,7 +547,7 @@ class RenderBubbleWayAnimation extends AbstractRender {
 
     static draw(field, renderData) {
         const animation = renderData.animation
-        const drawingState = this.drawingState
+        //const drawingState = this.drawingState
 
         this.isAnimationComplete = true
 
@@ -579,7 +580,7 @@ class RenderBubbleWayAnimation extends AbstractRender {
 
     static afterRender(renderState) {
         if (this.isWaitingForAnimation && this.isAnimationComplete) {
-            MainstreamStuff.worker.postMessage(message('animation_complete'))
+            MainstreamStuff.worker.postMessage(messageToWorker('animation_complete'))
         }
     }
 }
