@@ -19,6 +19,7 @@ export class Settings {
 
     static maxFps = 60
 
+    static bubblesToPop = 3
     static maxLives = 4
     static addLineRule = [
         [1, 1, 2, 2],
@@ -88,8 +89,9 @@ class Game {
 
         AddBubblesLines.complete()
         const staticBubble = await ShootBubble.complete()
+        PopFreeBubbles.complete(staticBubble)
 
-        // pop bubbles
+        // clean up the suspended bubbles
     }
 }
 
@@ -324,6 +326,33 @@ class ShootBubble extends AbstractGameEvent {
                 this.addToWayList(aimVector)
                 return
             }
+        }
+    }
+}
+
+class PopFreeBubbles extends AbstractGameEvent {
+    static complete(staticBubble) {
+        const type = staticBubble.type
+        const bubbleToClearBySteps = [[staticBubble]]
+        const SameTypeBubbles = new Set([staticBubble])
+
+        for (const step of bubbleToClearBySteps) {
+            const nextStep = []
+            for (const staticBubble of step) {
+                for (const adjacentBubble of staticBubble.adjacentBubbles) {
+                    if (adjacentBubble.type === type && !SameTypeBubbles.has(adjacentBubble)) {
+                        nextStep.push(adjacentBubble)
+                        SameTypeBubbles.add(adjacentBubble)
+                    }
+                }
+            }
+            if (nextStep.length > 0) bubbleToClearBySteps.push(nextStep)
+        }
+
+        if (SameTypeBubbles.length >= Settings.bubblesToPop) {
+            // pop
+        } else {
+            // minus lives
         }
     }
 }
@@ -635,7 +664,7 @@ class StaticBubble extends Bubble {
         this.column = column
         this.r = Settings.bubbleRadius
         StaticBubble.bubbles.push(this)
-        this.adjacentBubble = []
+        this.adjacentBubbles = []
 
         if (!StaticBubble.matrix[row]) StaticBubble.matrix[row] = []
         StaticBubble.matrix[row][column] = this
@@ -660,7 +689,7 @@ class StaticBubble extends Bubble {
             function add(bubble, row, column) {
                 if (!StaticBubble.matrix[row]) return
                 if (!StaticBubble.matrix[row][column]) return
-                bubble.adjacentBubble.push(bubble)
+                bubble.adjacentBubbles.push(bubble)
             }
             add(bubble, 0, 0) // current
             add(bubble, bubble.row, bubble.column - 1) // left cell
