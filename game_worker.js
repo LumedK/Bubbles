@@ -44,8 +44,22 @@ export class MainstreamStuff {
     static Renders = {}
     static worker = undefined
     static currentWorkerMessage = ''
+
+    static onGameOver(isWin) {
+        clearTimeout(this.Renders.GameRender.interval)
+        if (isWin) {
+            alert('You win!')
+        } else {
+            alert('You lose')
+        }
+    }
+
     static onWorkerMessage(workerMessage) {
         MainstreamStuff.currentWorkerMessage = workerMessage
+        const isGameOver = Boolean(
+            workerMessage === 'game_over_win' || workerMessage === 'game_over_lose'
+        )
+        if (isGameOver) MainstreamStuff.onGameOver(workerMessage === 'game_over_win')
     }
 }
 
@@ -65,7 +79,6 @@ class Game {
         this.aimBubble = undefined
         this.nextBubble = undefined
         this.lives = new Lives()
-        // this.clickXY = undefined
     }
 
     initiate() {
@@ -86,12 +99,18 @@ class Game {
     async loop() {
         const game = this
         game.initiate()
+        AddBubblesLines.complete(10)
 
-        AddBubblesLines.complete()
-        const staticBubble = await ShootBubble.complete()
-        PopFreeBubbles.complete(staticBubble)
-
-        // clean up the suspended bubbles
+        while (!Game.game.finished) {
+            const staticBubble = await ShootBubble.complete()
+            PopSameBubbles.complete(staticBubble)
+            PopFreeBubbles.complete()
+            if (Game.game.lives.isEmpty) {
+                AddBubblesLines.complete()
+                PopFreeBubbles.complete()
+            }
+            CheckGameCondition.complete()
+        }
     }
 }
 
@@ -107,8 +126,8 @@ class AbstractGameEvent {
 }
 
 class AddBubblesLines extends AbstractGameEvent {
-    static complete() {
-        const numberOfAddingLines = this.getNumberOfAddingLines()
+    static complete(numberOfAddingLines = this.getNumberOfAddingLines()) {
+        //const numberOfAddingLines = this.getNumberOfAddingLines()
         this.ShiftBubbles(numberOfAddingLines)
 
         let numberOfNewBubbles = 0
@@ -139,7 +158,7 @@ class AddBubblesLines extends AbstractGameEvent {
             if (offsetBubble.type) continue
             offsetBubble.type = bubble.type
             bubble.type = undefined
-            numberOfNewBubbles += 1
+            // numberOfNewBubbles += 1
         }
     }
 
@@ -211,12 +230,20 @@ class ShootBubble extends AbstractGameEvent {
 
         // complete action
         this.staticBubble.type = this.bubble.type
+        this.bubble.type = undefined
         this.bubble = undefined
         Game.game.aimBubble.type = Game.game.nextBubble.type
         Game.game.nextBubble.type = Bubble.getRandomType()
 
         sendMessageToMainstream()
-        return this.staticBubble
+
+        const hitStaticBubble = this.staticBubble
+        this.clickXY = undefined
+        this.bubble = undefined
+        this.staticBubble = undefined
+        this.wayList = []
+
+        return hitStaticBubble
     }
 
     static setAnimation() {
@@ -330,7 +357,7 @@ class ShootBubble extends AbstractGameEvent {
     }
 }
 
-class PopFreeBubbles extends AbstractGameEvent {
+class PopSameBubbles extends AbstractGameEvent {
     static complete(staticBubble) {
         const type = staticBubble.type
         const bubbleToClearBySteps = [[staticBubble]]
@@ -349,11 +376,82 @@ class PopFreeBubbles extends AbstractGameEvent {
             if (nextStep.length > 0) bubbleToClearBySteps.push(nextStep)
         }
 
-        if (SameTypeBubbles.length >= Settings.bubblesToPop) {
-            // pop
+        if (SameTypeBubbles.size >= Settings.bubblesToPop) {
+            this.clearPoppingBubble(bubbleToClearBySteps)
         } else {
-            // minus lives
+            Game.game.lives.minusLive()
         }
+
+        this.sendRenderData()
+    }
+
+    static clearPoppingBubble(bubbleToClearBySteps) {
+        // future: pop animation
+        for (const step of bubbleToClearBySteps) {
+            for (const bubble of step) {
+                bubble.type = undefined
+            }
+        }
+    }
+}
+
+class PopFreeBubbles extends AbstractGameEvent {
+    static complete() {
+        const linkedBubbles = new Set()
+        // add static bubbles from 1st row
+        for (const staticBubble of StaticBubble.matrix[0]) {
+            if (staticBubble.type) linkedBubbles.add(staticBubble)
+        }
+        // get linked static bubbles
+        for (const staticBubble of linkedBubbles) {
+            for (const adjacentBubbles of staticBubble.adjacentBubbles) {
+                if (adjacentBubbles.type) linkedBubbles.add(adjacentBubbles)
+            }
+        }
+        // get suspended bubbles
+        const bubbleToClearBySteps = []
+        for (const row of StaticBubble.matrix) {
+            const step = []
+            for (const staticBubble of row) {
+                if (staticBubble.type && !linkedBubbles.has(staticBubble)) {
+                    step.push(staticBubble)
+                }
+            }
+            if (step.length > 0) bubbleToClearBySteps.push(step)
+        }
+
+        this.clearPoppingBubble(bubbleToClearBySteps)
+        this.sendRenderData()
+    }
+
+    static clearPoppingBubble(bubbleToClearBySteps) {
+        // future: pop animation
+        for (const step of bubbleToClearBySteps) {
+            for (const bubble of step) {
+                bubble.type = undefined
+            }
+        }
+    }
+}
+
+class CheckGameCondition extends AbstractGameEvent {
+    static complete() {
+        let win = true
+        for (const bubble of StaticBubble.matrix[0]) {
+            win = win && !bubble.type
+        }
+
+        let lose = false
+        for (const bubble of StaticBubble.matrix[StaticBubble.matrix.length - 1]) {
+            if (bubble.type) {
+                lose = true
+                break
+            }
+        }
+
+        Game.game.finished = win || lose
+        if (win) sendMessageToMainstream('game_over_win')
+        if (lose) sendMessageToMainstream('game_over_lose')
     }
 }
 
@@ -370,7 +468,6 @@ class AbstractRender {
 class GameRender extends AbstractRender {
     static #init = (() => {
         super.init(this)
-        //AbstractRender.GameRender = GameRender
     })()
 
     constructor() {
@@ -411,7 +508,6 @@ class GameRender extends AbstractRender {
 class FPSRender extends GameRender {
     static #init = (() => {
         super.init(this)
-        // GameRender.FPSRender = FPSRender
 
         const afterRender = GameRender.afterRender
         GameRender.afterRender = function (renderState) {
@@ -689,16 +785,16 @@ class StaticBubble extends Bubble {
             function add(bubble, row, column) {
                 if (!StaticBubble.matrix[row]) return
                 if (!StaticBubble.matrix[row][column]) return
-                bubble.adjacentBubbles.push(bubble)
+                bubble.adjacentBubbles.push(StaticBubble.matrix[row][column])
             }
-            add(bubble, 0, 0) // current
+            // add(bubble, bubble.row, bubble.column) // current
             add(bubble, bubble.row, bubble.column - 1) // left cell
             add(bubble, bubble.row, bubble.column + 1) // right cell
             add(bubble, bubble.row - 1, bubble.column) // top cell
-            add(bubble, bubble.row - 1, bubble.column) // bottom cell
+            add(bubble, bubble.row + 1, bubble.column) // bottom cell
             const shift = bubble.row % 2 === 0 ? -1 : +1
             add(bubble, bubble.row - 1, bubble.column + shift) // top shift cell
-            add(bubble, bubble.row - 1, bubble.column + shift) // bottom shift cell
+            add(bubble, bubble.row + 1, bubble.column + shift) // bottom shift cell
         }
     }
 }
@@ -716,6 +812,17 @@ class Lives {
     constructor() {
         this.maxLives = Settings.maxLives
         this.currentLives = Settings.maxLives
+    }
+    minusLive() {
+        this.currentLives--
+    }
+
+    get isEmpty() {
+        if (this.currentLives === 0) {
+            this.currentLives = this.maxLives
+            return true
+        }
+        return false
     }
 }
 
@@ -819,20 +926,6 @@ function getRandomInt(min = 0, max = 10) {
 onmessage = function (event) {
     const { command, attachment } = event.data
     onWorkerMessage(command, attachment)
-
-    // let workerMessage = ''
-    // if (command === 'start_new_game') {
-    //     new Game()
-    //     workerMessage = 'waiting_for_click'
-    // } else if (command === 'click') {
-    //     Game.game.clickXY = attachment
-    //     workerMessage = Game.game.loop.next().value
-    // } else if (command === 'animation_complete') {
-    //     workerMessage = Game.game.loop.next().value
-    // }
-
-    // const workerData = { renderDataList: RenderObjects.getRenderData() }
-    // this.postMessage({ workerMessage, workerData })
 }
 
 function onWorkerMessage(command, attachment) {}
