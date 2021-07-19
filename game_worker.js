@@ -126,57 +126,112 @@ class AbstractGameEvent {
 }
 
 class AddBubblesLines extends AbstractGameEvent {
-    static complete(numberOfAddingLines = this.getNumberOfAddingLines()) {
-        //const numberOfAddingLines = this.getNumberOfAddingLines()
-        this.ShiftBubbles(numberOfAddingLines)
-
-        let numberOfNewBubbles = 0
-        for (let bubble of StaticBubble.bubbles) {
-            if (bubble.row > numberOfAddingLines - 1) break
-            if (bubble.type) break
-            numberOfNewBubbles += 1
+    static complete(numberOfAddingLines) {
+        if (!numberOfAddingLines) {
+            numberOfAddingLines =
+                Settings.addLineRule[Bubble.possibleTypes.length - 1][Game.game.lives.maxLives - 1]
         }
 
-        const list = this.getRandomTypeList(numberOfNewBubbles)
-        list.forEach((type, index) => {
-            StaticBubble.bubbles[index].type = type
-        })
-
-        super.sendRenderData()
-    }
-
-    static getNumberOfAddingLines() {
-        return Settings.addLineRule[Bubble.possibleTypes.length - 1][Game.game.lives.maxLives - 1]
-    }
-
-    static ShiftBubbles(numberOfAddingLines) {
-        for (let bubble of StaticBubble.bubbles.slice().reverse()) {
-            if (!bubble.type) continue
-            const offsetBubbleRow = bubble.row + numberOfAddingLines
-            if (offsetBubbleRow > Settings.rows - 1) continue
-            let offsetBubble = StaticBubble.matrix[offsetBubbleRow][bubble.column]
-            if (offsetBubble.type) continue
-            offsetBubble.type = bubble.type
-            bubble.type = undefined
-            // numberOfNewBubbles += 1
+        // shift bubbles lines
+        let rowOffset = undefined
+        for (const staticBubble of StaticBubble.bubbles.slice().reverse()) {
+            if (!staticBubble.type) continue
+            rowOffset = rowOffset || Math.min(numberOfAddingLines, Settings.rows - staticBubble.row)
+            const offsetBubble =
+                StaticBubble.matrix[staticBubble.row + rowOffset][staticBubble.column]
+            offsetBubble.type = staticBubble.type
+            staticBubble.type = undefined
         }
-    }
-
-    static getRandomTypeList(NumberOfShiftedBubbles) {
-        const list = []
-        if (NumberOfShiftedBubbles === 0) return list
-        const differenceTypes = new Set()
-        const length = Bubble.possibleTypes.length
-        for (let i = 0; i < NumberOfShiftedBubbles; i++) {
-            let type = Bubble.possibleTypes[getRandomInt(0, length - 1)]
-            list.push(type)
-            differenceTypes.add(type)
+        rowOffset = rowOffset || numberOfAddingLines
+        // add bubbles
+        function addBubblesLine() {
+            for (let row = 0; row < rowOffset; row++) {
+                for (const staticBubble of StaticBubble.matrix[row]) {
+                    staticBubble.type = Bubble.getRandomType()
+                }
+            }
         }
-        if (Game.game.aimBubble.type) differenceTypes.add(Game.game.aimBubble.type)
+        function checkTypes() {
+            const types = new Set()
+            for (const staticBubble of StaticBubble.bubbles) {
+                if (!staticBubble.type) continue
+                types.add(staticBubble.type)
+            }
+            return types.size === Bubble.possibleTypes.length
+        }
 
-        if (differenceTypes.size !== length) return getRandomTypeList()
-        return list
+        while (true) {
+            addBubblesLine()
+            if (checkTypes()) break
+        }
+
+        this.sendRenderData()
     }
+
+    // static complete(numberOfAddingLines = this.getNumberOfAddingLines()) {
+    //     this.ShiftBubbles(numberOfAddingLines)
+
+    //     let numberOfNewBubbles = 0
+    //     for (let bubble of StaticBubble.bubbles) {
+    //         if (bubble.row > numberOfAddingLines - 1) break
+    //         if (bubble.type) break
+    //         numberOfNewBubbles += 1
+    //     }
+
+    //     const list = this.getRandomTypeList(numberOfNewBubbles)
+    //     list.forEach((type, index) => {
+    //         StaticBubble.bubbles[index].type = type
+    //     })
+
+    //     super.sendRenderData()
+    // }
+
+    // static getNumberOfAddingLines() {
+    //     return Settings.addLineRule[Bubble.possibleTypes.length - 1][Game.game.lives.maxLives - 1]
+    // }
+
+    // static ShiftBubbles(numberOfAddingLines) {
+    //     let allowedNumberOfAddingLines = undefined
+    //     for (let staticBubble of StaticBubble.bubbles.slice().reverse()) {
+    //         if (!staticBubble.type) continue
+    //         allowedNumberOfAddingLines =
+    //             allowedNumberOfAddingLines ||
+    //             Math.min(numberOfAddingLines, Settings.rows - staticBubble.row)
+
+    //         const offsetRow = allowedNumberOfAddingLines + staticBubble.row
+    //         const offsetBubble = StaticBubble.matrix[offsetRow][staticBubble.column]
+    //         if (offsetBubble.type) continue
+    //         offsetBubble.type = staticBubble.type
+    //         staticBubble.type = undefined
+    //     }
+
+    //     // for (let bubble of StaticBubble.bubbles.slice().reverse()) {
+    //     //     if (!bubble.type) continue
+    //     //     const offsetBubbleRow = bubble.row + numberOfAddingLines
+
+    //     //     if (offsetBubbleRow > Settings.rows - 1) continue
+    //     //     let offsetBubble = StaticBubble.matrix[offsetBubbleRow][bubble.column]
+    //     //     if (offsetBubble.type) continue
+    //     //     offsetBubble.type = bubble.type
+    //     //     bubble.type = undefined
+    //     // }
+    // }
+
+    // static getRandomTypeList(NumberOfShiftedBubbles) {
+    //     const list = []
+    //     if (NumberOfShiftedBubbles === 0) return list
+    //     const differenceTypes = new Set()
+    //     const length = Bubble.possibleTypes.length
+    //     for (let i = 0; i < NumberOfShiftedBubbles; i++) {
+    //         let type = Bubble.possibleTypes[getRandomInt(0, length - 1)]
+    //         list.push(type)
+    //         differenceTypes.add(type)
+    //     }
+    //     if (Game.game.aimBubble.type) differenceTypes.add(Game.game.aimBubble.type)
+
+    //     if (differenceTypes.size !== length) return getRandomTypeList()
+    //     return list
+    // }
 }
 
 class ShootBubble extends AbstractGameEvent {
@@ -929,3 +984,5 @@ onmessage = function (event) {
 }
 
 function onWorkerMessage(command, attachment) {}
+
+// TODO: rework message system
