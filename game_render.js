@@ -1,8 +1,8 @@
-function onWorkerMessage(params) {
-    console.log('onWorkerMessage')
-}
+// function onWorkerMessage(params) {
+//     console.log('onWorkerMessage')
+// }
 
-import { Settings, MainstreamStuff, messageToWorker } from './game_worker.js'
+import { Settings, Renders, messageToWorker, setWorker } from './game_worker.js'
 
 class Images {
     static getImage(src) {
@@ -51,23 +51,49 @@ class Field {
 
     onClick(event) {
         const cursorXY = this.translateCursor(event.layerX, event.layerY)
-        // this.clickX = cursorXY.x
-        // this.clickY = cursorXY.y
-        if (MainstreamStuff.currentWorkerMessage === 'waiting_for_click') {
-            MainstreamStuff.worker.postMessage(messageToWorker('click', cursorXY))
-        }
+        worker.postMessage(messageToWorker('click', cursorXY))
+        //if (MainstreamStuff.currentWorkerMessage === 'waiting_for_click') {
+        //     MainstreamStuff.worker.postMessage(messageToWorker('click', cursorXY))
+        // }
     }
 }
 
-const gameRender = new MainstreamStuff.Renders.GameRender()
+function onmessageCommand(command) {
+    if (command === 'game_over_win') {
+        alert('You win!')
+        clearTimeout(gameRender.interval)
+    }
+    if (command === 'game_over_lose') {
+        alert('You lose')
+        clearTimeout(gameRender.interval)
+    }
+}
+
+const gameRender = new Renders.GameRender()
 gameRender.field = new Field()
 gameRender.interval = setInterval(gameRender.run.bind(gameRender), 1000 / Settings.maxFps)
 
-MainstreamStuff.worker = new Worker('game_worker.js', { type: 'module' })
-MainstreamStuff.worker.onmessage = function (event) {
-    const { workerMessage, workerData } = event.data
-    MainstreamStuff.onWorkerMessage(workerMessage)
-    gameRender.renderDataList = workerData.renderDataList
+let worker = new Worker('game_worker.js', { type: 'module' })
+setWorker(worker)
+worker.onmessage = function (event) {
+    const message = event.data
+    if (message.command) {
+        onmessageCommand(message.command)
+    }
+    gameRender.renderDataList = message.renderDataList
 }
 
-MainstreamStuff.worker.postMessage(messageToWorker('start_new_game'))
+worker.postMessage(messageToWorker('start_new_game'))
+
+// const gameRender = new MainstreamStuff.Renders.GameRender()
+// gameRender.field = new Field()
+// gameRender.interval = setInterval(gameRender.run.bind(gameRender), 1000 / Settings.maxFps)
+
+// MainstreamStuff.worker = new Worker('game_worker.js', { type: 'module' })
+// MainstreamStuff.worker.onmessage = function (event) {
+//     const { workerMessage, workerData } = event.data
+//     MainstreamStuff.onWorkerMessage(workerMessage)
+//     gameRender.renderDataList = workerData.renderDataList
+// }
+
+// MainstreamStuff.worker.postMessage(messageToWorker('start_new_game'))

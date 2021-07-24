@@ -31,37 +31,50 @@ export class Settings {
     ] // ROW: possible balls; COLUMN: max lives; VALUE: number of adding lines
 }
 
+export function setWorker(setWorker) {
+    worker = setWorker
+}
+
+let worker = undefined
+
 export function messageToWorker(command = '', attachment) {
     return { command: command, attachment: attachment }
 }
 
-function sendMessageToMainstream(workerMessage) {
-    const workerData = { renderDataList: RenderObjects.getRenderData() }
-    postMessage({ workerMessage, workerData })
-}
-
-export class MainstreamStuff {
-    static Renders = {}
-    static worker = undefined
-    static currentWorkerMessage = ''
-
-    static onGameOver(isWin) {
-        clearTimeout(this.Renders.GameRender.interval)
-        if (isWin) {
-            alert('You win!')
-        } else {
-            alert('You lose')
-        }
-    }
-
-    static onWorkerMessage(workerMessage) {
-        MainstreamStuff.currentWorkerMessage = workerMessage
-        const isGameOver = Boolean(
-            workerMessage === 'game_over_win' || workerMessage === 'game_over_lose'
-        )
-        if (isGameOver) MainstreamStuff.onGameOver(workerMessage === 'game_over_win')
+function messageToMainstream(command = undefined) {
+    return {
+        command: command,
+        renderDataList: RenderObjects.getRenderData()
     }
 }
+
+// function sendMessageToMainstream(workerMessage) {
+//     const workerData = { renderDataList: RenderObjects.getRenderData() }
+//     postMessage({ workerMessage, workerData })
+// }
+
+// export class MainstreamStuff {
+//     static Renders = {}
+//     static worker = undefined
+//     static currentWorkerMessage = ''
+
+//     static onGameOver(isWin) {
+//         clearTimeout(this.Renders.GameRender.interval)
+//         if (isWin) {
+//             alert('You win!')
+//         } else {
+//             alert('You lose')
+//         }
+//     }
+
+//     static onWorkerMessage(workerMessage) {
+//         MainstreamStuff.currentWorkerMessage = workerMessage
+//         const isGameOver = Boolean(
+//             workerMessage === 'game_over_win' || workerMessage === 'game_over_lose'
+//         )
+//         if (isGameOver) MainstreamStuff.onGameOver(workerMessage === 'game_over_win')
+//     }
+// }
 
 class Game {
     static #init = (() => {
@@ -116,13 +129,20 @@ class Game {
 
 // Game events
 
+function sendRenderData() {
+    postMessage(messageToMainstream())
+}
+
 class AbstractGameEvent {
     static complete() {
         this.sendRenderData()
     }
-    static sendRenderData(workerMessage = 'event_complete') {
-        sendMessageToMainstream(workerMessage)
+    static sendRenderData() {
+        sendRenderData()
     }
+    // static sendRenderData(workerMessage = 'event_complete') {
+    //     //sendMessageToMainstream(workerMessage)
+    // }
 }
 
 class AddBubblesLines extends AbstractGameEvent {
@@ -167,71 +187,6 @@ class AddBubblesLines extends AbstractGameEvent {
 
         this.sendRenderData()
     }
-
-    // static complete(numberOfAddingLines = this.getNumberOfAddingLines()) {
-    //     this.ShiftBubbles(numberOfAddingLines)
-
-    //     let numberOfNewBubbles = 0
-    //     for (let bubble of StaticBubble.bubbles) {
-    //         if (bubble.row > numberOfAddingLines - 1) break
-    //         if (bubble.type) break
-    //         numberOfNewBubbles += 1
-    //     }
-
-    //     const list = this.getRandomTypeList(numberOfNewBubbles)
-    //     list.forEach((type, index) => {
-    //         StaticBubble.bubbles[index].type = type
-    //     })
-
-    //     super.sendRenderData()
-    // }
-
-    // static getNumberOfAddingLines() {
-    //     return Settings.addLineRule[Bubble.possibleTypes.length - 1][Game.game.lives.maxLives - 1]
-    // }
-
-    // static ShiftBubbles(numberOfAddingLines) {
-    //     let allowedNumberOfAddingLines = undefined
-    //     for (let staticBubble of StaticBubble.bubbles.slice().reverse()) {
-    //         if (!staticBubble.type) continue
-    //         allowedNumberOfAddingLines =
-    //             allowedNumberOfAddingLines ||
-    //             Math.min(numberOfAddingLines, Settings.rows - staticBubble.row)
-
-    //         const offsetRow = allowedNumberOfAddingLines + staticBubble.row
-    //         const offsetBubble = StaticBubble.matrix[offsetRow][staticBubble.column]
-    //         if (offsetBubble.type) continue
-    //         offsetBubble.type = staticBubble.type
-    //         staticBubble.type = undefined
-    //     }
-
-    //     // for (let bubble of StaticBubble.bubbles.slice().reverse()) {
-    //     //     if (!bubble.type) continue
-    //     //     const offsetBubbleRow = bubble.row + numberOfAddingLines
-
-    //     //     if (offsetBubbleRow > Settings.rows - 1) continue
-    //     //     let offsetBubble = StaticBubble.matrix[offsetBubbleRow][bubble.column]
-    //     //     if (offsetBubble.type) continue
-    //     //     offsetBubble.type = bubble.type
-    //     //     bubble.type = undefined
-    //     // }
-    // }
-
-    // static getRandomTypeList(NumberOfShiftedBubbles) {
-    //     const list = []
-    //     if (NumberOfShiftedBubbles === 0) return list
-    //     const differenceTypes = new Set()
-    //     const length = Bubble.possibleTypes.length
-    //     for (let i = 0; i < NumberOfShiftedBubbles; i++) {
-    //         let type = Bubble.possibleTypes[getRandomInt(0, length - 1)]
-    //         list.push(type)
-    //         differenceTypes.add(type)
-    //     }
-    //     if (Game.game.aimBubble.type) differenceTypes.add(Game.game.aimBubble.type)
-
-    //     if (differenceTypes.size !== length) return getRandomTypeList()
-    //     return list
-    // }
 }
 
 class ShootBubble extends AbstractGameEvent {
@@ -249,7 +204,7 @@ class ShootBubble extends AbstractGameEvent {
             this.onClick()
         }
 
-        if (command === 'animation_complete') {
+        if (command === 'bubbleWayAnimation_complete') {
             this.onBubbleWayAnimationComplete()
         }
     }
@@ -264,7 +219,7 @@ class ShootBubble extends AbstractGameEvent {
 
     static async complete() {
         // waiting for click
-        sendMessageToMainstream('waiting_for_click')
+        //sendMessageToMainstream('waiting_for_click')
         await new Promise((resolve, reject) => {
             this.onClick = resolve
         })
@@ -279,8 +234,9 @@ class ShootBubble extends AbstractGameEvent {
 
         // waiting for complete animation
         await new Promise((resolve, reject) => {
-            sendMessageToMainstream('waiting_for_complete_animation')
+            //sendMessageToMainstream('waiting_for_complete_animation')
             this.onBubbleWayAnimationComplete = resolve
+            sendRenderData()
         })
 
         // complete action
@@ -290,7 +246,7 @@ class ShootBubble extends AbstractGameEvent {
         Game.game.aimBubble.type = Game.game.nextBubble.type
         Game.game.nextBubble.type = Bubble.getRandomType()
 
-        sendMessageToMainstream()
+        //sendMessageToMainstream()
 
         const hitStaticBubble = this.staticBubble
         this.clickXY = undefined
@@ -505,16 +461,18 @@ class CheckGameCondition extends AbstractGameEvent {
         }
 
         Game.game.finished = win || lose
-        if (win) sendMessageToMainstream('game_over_win')
-        if (lose) sendMessageToMainstream('game_over_lose')
+        if (win) postMessage(messageToMainstream('game_over_win'))
+        if (lose) postMessage(messageToMainstream('game_over_lose'))
     }
 }
 
 // Renders
 
+export const Renders = {}
+
 class AbstractRender {
     static init = (subRender) => {
-        MainstreamStuff.Renders[subRender.name] = subRender
+        Renders[subRender.name] = subRender
     }
     static getRenderData() {}
     static draw() {}
@@ -543,7 +501,8 @@ class GameRender extends AbstractRender {
             this.constructor.onRender(renderState)
             try {
                 // const render = this.constructor[renderData.Render]
-                const render = MainstreamStuff.Renders[renderData.Render]
+                //const render = MainstreamStuff.Renders[renderData.Render]
+                const render = Renders[renderData.Render]
 
                 render.draw(this.field, renderData)
             } catch (error) {
@@ -625,7 +584,7 @@ class BubbleRender extends AbstractRender {
 
     static draw(field, renderData) {
         if (renderData.animation) {
-            MainstreamStuff.Renders[renderData.animation.Render].draw(field, renderData)
+            Renders[renderData.animation.Render].draw(field, renderData)
         }
 
         const ctx = field.ctx
@@ -686,15 +645,24 @@ class RenderBubbleWayAnimation extends AbstractRender {
             RenderBubbleWayAnimation.afterRender(renderState)
         }
 
-        const onWorkerMessage = MainstreamStuff.onWorkerMessage
-        MainstreamStuff.onWorkerMessage = function (workerMessage) {
-            onWorkerMessage(workerMessage)
-            RenderBubbleWayAnimation.onWorkerMessage(workerMessage)
+        const beforeRender = GameRender.beforeRender
+        GameRender.beforeRender = function (renderState) {
+            beforeRender(renderState)
+            RenderBubbleWayAnimation.beforeRender(renderState)
         }
+
+        // const onWorkerMessage = MainstreamStuff.onWorkerMessage
+        // MainstreamStuff.onWorkerMessage = function (workerMessage) {
+        //     onWorkerMessage(workerMessage)
+        //     RenderBubbleWayAnimation.onWorkerMessage(workerMessage)
+        // }
     })()
 
+    // static isAnimationComplete = true
+    // static isWaitingForAnimation = false
+
+    static isAnimationBegin = false
     static isAnimationComplete = true
-    static isWaitingForAnimation = false
 
     constructor(wayList) {
         super()
@@ -727,41 +695,74 @@ class RenderBubbleWayAnimation extends AbstractRender {
 
     static draw(field, renderData) {
         const animation = renderData.animation
-        //const drawingState = this.drawingState
 
-        this.isAnimationComplete = true
-
-        if (animation.count <= 0 && animation.steps.length === 0) {
-            renderData.animation = undefined
-            return // animation complete
-        }
+        this.isAnimationBegin = true
 
         if (animation.count <= 0) {
             const step = animation.steps.shift()
-            animation.count = step.count
-            animation.dx = step.dx
-            animation.dy = step.dy
-            if (animation.count <= 0) return // step complete
+            if (step) {
+                animation.count = step.count
+                animation.dx = step.dx
+                animation.dy = step.dy
+            }
         }
 
+        if (animation.count <= 0) {
+            renderData.animation = undefined
+            return
+        }
         renderData.x += animation.dx
         renderData.y += animation.dy
         animation.count--
-
         this.isAnimationComplete = false
+
+        // //const drawingState = this.drawingState
+
+        // this.isAnimationComplete = true
+
+        // if (animation.count <= 0 && animation.steps.length === 0) {
+        //     renderData.animation = undefined
+        //     return // animation complete
+        // }
+
+        // if (animation.count <= 0) {
+        //     const step = animation.steps.shift()
+        //     animation.count = step.count
+        //     animation.dx = step.dx
+        //     animation.dy = step.dy
+        //     if (animation.count <= 0) return // step complete
+        // }
+
+        // renderData.x += animation.dx
+        // renderData.y += animation.dy
+        // animation.count--
+
+        // this.isAnimationComplete = false
     }
 
-    static onWorkerMessage(workerMessage) {
-        if (workerMessage === 'waiting_for_complete_animation') {
-            this.isAnimationComplete = true
-            this.isWaitingForAnimation = true
-        }
+    // static onWorkerMessage(workerMessage) {
+    //     if (workerMessage === 'waiting_for_complete_animation') {
+    //         this.isAnimationComplete = true
+    //         this.isWaitingForAnimation = true
+    //     }
+    // }
+
+    static beforeRender(renderState) {
+        this.isAnimationComplete = true
     }
 
     static afterRender(renderState) {
-        if (this.isWaitingForAnimation && this.isAnimationComplete) {
-            MainstreamStuff.worker.postMessage(messageToWorker('animation_complete'))
+        if (this.isAnimationBegin && this.isAnimationComplete) {
+            this.isAnimationBegin = false
+            this.isAnimationComplete = true
+            worker.postMessage(messageToWorker('bubbleWayAnimation_complete'))
         }
+
+        // static isAnimationBegin = false
+        // static isAnimationComplete = true
+        // if (this.isWaitingForAnimation && this.isAnimationComplete) {
+        //     MainstreamStuff.worker.postMessage(messageToWorker('animation_complete'))
+        // }
     }
 }
 
@@ -985,4 +986,5 @@ onmessage = function (event) {
 
 function onWorkerMessage(command, attachment) {}
 
-// TODO: rework message system
+// TODO: rework bubble collisions
+// TODO: add animations
