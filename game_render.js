@@ -1,7 +1,3 @@
-// function onWorkerMessage(params) {
-//     console.log('onWorkerMessage')
-// }
-
 import { Settings, Renders, messageToWorker, setWorker } from './game_worker.js'
 
 class Images {
@@ -84,16 +80,3 @@ worker.onmessage = function (event) {
 }
 
 worker.postMessage(messageToWorker('start_new_game'))
-
-// const gameRender = new MainstreamStuff.Renders.GameRender()
-// gameRender.field = new Field()
-// gameRender.interval = setInterval(gameRender.run.bind(gameRender), 1000 / Settings.maxFps)
-
-// MainstreamStuff.worker = new Worker('game_worker.js', { type: 'module' })
-// MainstreamStuff.worker.onmessage = function (event) {
-//     const { workerMessage, workerData } = event.data
-//     MainstreamStuff.onWorkerMessage(workerMessage)
-//     gameRender.renderDataList = workerData.renderDataList
-// }
-
-// MainstreamStuff.worker.postMessage(messageToWorker('start_new_game'))

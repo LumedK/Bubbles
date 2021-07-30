@@ -22,12 +22,12 @@ export class Settings {
     static bubblesToPop = 3
     static maxLives = 4
     static addLineRule = [
-        [1, 1, 2, 2],
-        [1, 2, 3, 4],
-        [1, 2, 3, 4],
-        [2, 3, 4, 5],
+        [4, 5, 6, 7],
         [3, 4, 5, 6],
-        [4, 5, 6, 7]
+        [2, 3, 4, 5],
+        [1, 2, 3, 4],
+        [1, 2, 3, 4],
+        [1, 1, 2, 2]
     ] // ROW: possible balls; COLUMN: max lives; VALUE: number of adding lines
 }
 
@@ -88,14 +88,14 @@ class Game {
     async loop() {
         const game = this
         game.initiate()
-        AddBubblesLines.complete(10)
+        await AddBubblesLines.complete(10)
 
         while (!Game.game.finished) {
             const staticBubble = await ShootBubble.complete()
             PopSameBubbles.complete(staticBubble)
             PopFreeBubbles.complete()
             if (Game.game.lives.isEmpty) {
-                AddBubblesLines.complete()
+                await AddBubblesLines.complete()
                 PopFreeBubbles.complete()
             }
             CheckGameCondition.complete()
@@ -177,12 +177,13 @@ class AddBubblesLines extends AbstractGameEvent {
     }
 
     static onAddBubbleAnimationComplete() {}
-    static linesOfBubbles = []
+    static completedMatrix = []
+    static addedBubbles = new Set()
 
     static async complete(numberOfAddingLines) {
         numberOfAddingLines = this.getNumberOfAddingLines(numberOfAddingLines)
-        this.linesOfBubbles = this.getLinesOfBubbles(numberOfAddingLines)
-        this.setupAnimation(numberOfAddingLines)
+        const typeList = this.getSetOfRandomType(numberOfAddingLines)
+        this.fillCompleteMatrix(numberOfAddingLines, typeList)
 
         sendRenderData()
 
@@ -190,142 +191,86 @@ class AddBubblesLines extends AbstractGameEvent {
             this.onAddBubbleAnimationComplete = resolve
         })
 
-        this.setBubbles(numberOfAddingLines)
+        this.setCompletedMatrix()
+        sendRenderData()
     }
 
     static getNumberOfAddingLines(numberOfAddingLines) {
         numberOfAddingLines =
             numberOfAddingLines ||
             Settings.addLineRule[Bubble.possibleTypes.length - 1][Game.game.lives.maxLives - 1]
-        const numberOfStaticBubbles = StaticBubble.bubbles.length - 1
+
         let bottomRowWithBubble = 0
-        for (let i = StaticBubble.bubbles.length - 1; i <= 0; i--) {
+        for (let i = StaticBubble.bubbles.length - 1; i >= 0; i--) {
             if (StaticBubble.bubbles[i].type) {
                 bottomRowWithBubble = StaticBubble.bubbles[i].row
                 break
             }
         }
-        numberOfAddingLines = Math.min(Settings.rows - bottomRowWithBubble, numberOfAddingLines)
 
+        numberOfAddingLines = Math.min(Settings.rows - bottomRowWithBubble, numberOfAddingLines)
         return numberOfAddingLines
     }
 
-    static getLinesOfBubbles(numberOfAddingLines) {
-        const possibleTypes = new Map()
-        for (const type of Bubble.possibleTypes) {
-            possibleTypes.set(type, 0)
+    static getSetOfRandomType(numberOfAddingLines) {
+        const typeList = []
+        const checkTypes = new Set([Game.game.aimBubble.type])
+        for (let i = 0; i < numberOfAddingLines * Settings.columns; i++) {
+            let type = Bubble.getRandomType()
+            typeList.push(type)
+            checkTypes.add(type)
         }
-
-        for (const staticBubble of StaticBubble.bubbles) {
-            const type = staticBubble.type
-            if (!type) continue
-            possibleTypes.set(type, possibleTypes.get(type) + 1)
+        if (Bubble.possibleTypes.length !== checkTypes.size) {
+            this.getSetOfRandomType(numberOfAddingLines)
         }
+        return typeList
+    }
 
-        const checkingTypes = new Set()
-        possibleTypes.forEach((value, key) => {
-            if (value === 0) checkingTypes.add(key)
+    static fillCompleteMatrix(numberOfAddingLines, typeList) {
+        const yOffset = 2 * Settings.bubbleRadius * numberOfAddingLines
+
+        StaticBubble.matrix.forEach((row) => {
+            this.completedMatrix.push(row.map((bubble) => bubble.type))
         })
 
-        const types = (function generateNewSetOfTypes(numberOfAddingLines, checkingTypes) {
-            const types = []
-            let typesSet = new Set()
-            for (let i = 0; i < numberOfAddingLines * Settings.columns; i++) {
-                const randomType = Bubble.getRandomType()
-                types.push(randomType)
-                typesSet.add(randomType)
-            }
-            //check results
-            typesSet.add(Game.game.aimBubble.type)
-            let haveAllTypes = true
-            for (const type of checkingTypes) {
-                if (!typesSet.has(type)) {
-                    haveAllTypes = false
+        for (let rowIndex = 0; rowIndex < Settings.rows; rowIndex++) {
+            for (let columnIndex = 0; columnIndex < Settings.columns; columnIndex++) {
+                const staticBubble = StaticBubble.matrix[rowIndex][columnIndex]
+                if (staticBubble.type) {
+                    const targetBubble =
+                        StaticBubble.matrix[rowIndex + numberOfAddingLines][columnIndex]
+                    staticBubble.animation = new AddBubbleAnimation(targetBubble.y, yOffset)
+                    this.completedMatrix[targetBubble.row][targetBubble.column] = staticBubble.type
+                }
+                if (rowIndex < numberOfAddingLines) {
+                    const newBubble = new Bubble(
+                        staticBubble.x,
+                        staticBubble.y - yOffset,
+                        typeList.pop()
+                    )
+                    newBubble.animation = new AddBubbleAnimation(staticBubble.y, yOffset)
+                    this.completedMatrix[rowIndex][columnIndex] = newBubble.type
+                    this.addedBubbles.add(newBubble)
                 }
             }
-            if (!haveAllTypes) {
-                types = generateNewSetOfTypes(numberOfAddingLines, checkingTypes)
-            }
-            return types
-        })(numberOfAddingLines, checkingTypes)
-
-        const rowOffset = 2 * Settings.bubbleRadius
-        const linesOfBubbles = []
-        StaticBubble.matrix.slice(1, numberOfAddingLines + 1).forEach((row, index) => {
-            const line = []
-            for (const staticBubble of row) {
-                if (types.length === 0) break
-                const bubble = new Bubble(
-                    staticBubble.x,
-                    staticBubble.y - rowOffset - rowOffset * (index + 1)
-                )
-                bubble.type = types.shift()
-                line.push(bubble)
-            }
-            if (line.length > 0) linesOfBubbles.push(line)
-        })
-
-        return linesOfBubbles
-
-        // // generate lines of bubbles
-        // linesOfBubbles = []
-        // let newLine = undefined
-        // for (const type of typesSet) {
-        //     if (newLine && newLine.length === Settings.columns) {
-        //         linesOfBubbles.push(newLine)
-        //         newLine = undefined
-        //     }
-        //     newLine = newLine || []
-        //     const
-
-        //     newLine.push(new Bubble())
-        // }
-        // if (newLine) linesOfBubbles.push(newLine)
-    }
-
-    static setupAnimation(numberOfAddingLines) {
-        StaticBubble.bubbles.forEach((staticBubble) => {
-            if (staticBubble.type) {
-                const yTarget =
-                    StaticBubble.matrix[staticBubble.row + numberOfAddingLines][staticBubble.column]
-                        .y
-                const yOffset = yTarget - staticBubble.y
-                staticBubble.animation = new AddBubbleAnimation(yTarget, yOffset)
-            }
-        })
-
-        this.linesOfBubbles.forEach((row, rowIndex) => {
-            row.forEach((bubble, columnIndex) => {
-                const targetBubble =
-                    StaticBubble.matrix[numberOfAddingLines - rowIndex][columnIndex]
-                bubble.animation = new AddBubbleAnimation(targetBubble.y, targetBubble.y - bubble.y)
-            })
-        })
-    }
-
-    static setBubbles(numberOfAddingLines) {
-        // replace type of static bubbles
-        for (const row = numberOfAddingLines; row < 0; row--) {
-            for (const staticBubble of StaticBubble.matrix[row]) {
-                if (!staticBubble.type) continue
-                const targetBubble =
-                    StaticBubble.matrix[row + numberOfAddingLines][staticBubble.column]
-                targetBubble.type = staticBubble.type
-                staticBubble.type = undefined
-            }
         }
-        // setup types of new bubbles
-        const bubblesToDelete = new Set()
-        this.linesOfBubbles.forEach((row, rowIndex) => {
-            row.forEach((bubble, columnIndex) => {
-                StaticBubble.matrix[rowIndex][columnIndex].type = bubble.type
-                bubblesToDelete.add(bubble)
+    }
+
+    static setCompletedMatrix() {
+        this.completedMatrix.forEach((lane, rowIndex) => {
+            lane.forEach((type, columnIndex) => {
+                const staticBubble = StaticBubble.matrix[rowIndex][columnIndex]
+                staticBubble.type = type
+                staticBubble.animation = undefined
             })
         })
-        // delete added bubbles
-        RenderObjects.objects.forEach((object) => {
-            if (bubblesToDelete.has(object)) object = undefined
+
+        RenderObjects.objects.forEach((object, index) => {
+            if (this.addedBubbles.has(object)) RenderObjects.objects[index] = undefined
         })
+
+        this.completedMatrix = []
+        this.addedBubbles = new Set()
     }
 }
 
@@ -640,10 +585,7 @@ class GameRender extends AbstractRender {
         for (const renderData of this.renderDataList) {
             this.constructor.onRender(renderState)
             try {
-                // const render = this.constructor[renderData.Render]
-                //const render = MainstreamStuff.Renders[renderData.Render]
                 const render = Renders[renderData.Render]
-
                 render.draw(this.field, renderData)
             } catch (error) {
                 console.log('render error', error)
@@ -790,16 +732,7 @@ class RenderBubbleWayAnimation extends AbstractRender {
             beforeRender(renderState)
             RenderBubbleWayAnimation.beforeRender(renderState)
         }
-
-        // const onWorkerMessage = MainstreamStuff.onWorkerMessage
-        // MainstreamStuff.onWorkerMessage = function (workerMessage) {
-        //     onWorkerMessage(workerMessage)
-        //     RenderBubbleWayAnimation.onWorkerMessage(workerMessage)
-        // }
     })()
-
-    // static isAnimationComplete = true
-    // static isWaitingForAnimation = false
 
     static isAnimationBegin = false
     static isAnimationComplete = true
@@ -855,37 +788,7 @@ class RenderBubbleWayAnimation extends AbstractRender {
         renderData.y += animation.dy
         animation.count--
         this.isAnimationComplete = false
-
-        // //const drawingState = this.drawingState
-
-        // this.isAnimationComplete = true
-
-        // if (animation.count <= 0 && animation.steps.length === 0) {
-        //     renderData.animation = undefined
-        //     return // animation complete
-        // }
-
-        // if (animation.count <= 0) {
-        //     const step = animation.steps.shift()
-        //     animation.count = step.count
-        //     animation.dx = step.dx
-        //     animation.dy = step.dy
-        //     if (animation.count <= 0) return // step complete
-        // }
-
-        // renderData.x += animation.dx
-        // renderData.y += animation.dy
-        // animation.count--
-
-        // this.isAnimationComplete = false
     }
-
-    // static onWorkerMessage(workerMessage) {
-    //     if (workerMessage === 'waiting_for_complete_animation') {
-    //         this.isAnimationComplete = true
-    //         this.isWaitingForAnimation = true
-    //     }
-    // }
 
     static beforeRender(renderState) {
         this.isAnimationComplete = true
@@ -897,30 +800,23 @@ class RenderBubbleWayAnimation extends AbstractRender {
             this.isAnimationComplete = true
             worker.postMessage(messageToWorker('bubbleWayAnimation_complete'))
         }
-
-        // static isAnimationBegin = false
-        // static isAnimationComplete = true
-        // if (this.isWaitingForAnimation && this.isAnimationComplete) {
-        //     MainstreamStuff.worker.postMessage(messageToWorker('animation_complete'))
-        // }
     }
 }
 
 class AddBubbleAnimation extends AbstractRender {
     static #init = (() => {
         super.init(this)
+        const afterRender = GameRender.afterRender
+        GameRender.afterRender = function (renderState) {
+            afterRender(renderState)
+            AddBubbleAnimation.afterRender(renderState)
+        }
 
-        // const afterRender = GameRender.afterRender
-        // GameRender.afterRender = function (renderState) {
-        //     afterRender(renderState)
-        //     RenderBubbleWayAnimation.afterRender(renderState)
-        // }
-
-        // const beforeRender = GameRender.beforeRender
-        // GameRender.beforeRender = function (renderState) {
-        //     beforeRender(renderState)
-        //     RenderBubbleWayAnimation.beforeRender(renderState)
-        // }
+        const beforeRender = GameRender.beforeRender
+        GameRender.beforeRender = function (renderState) {
+            beforeRender(renderState)
+            AddBubbleAnimation.beforeRender(renderState)
+        }
     })()
 
     static isAnimationBegin = false
@@ -937,8 +833,8 @@ class AddBubbleAnimation extends AbstractRender {
         if (!animation) return undefined
         const animationData = {
             Render: 'AddBubbleAnimation',
-            count: Math.ceil(animation.yOffset / Settings.bubbleSpeed),
-            dy: Settings.bubbleSpeed,
+            count: Math.ceil(animation.yOffset / (Settings.bubbleSpeed / 1)),
+            dy: Settings.bubbleSpeed / 1,
             yTarget: animation.yTarget
         }
         return animationData
@@ -950,7 +846,7 @@ class AddBubbleAnimation extends AbstractRender {
         const animation = renderData.animation
         if (animation.count > 0) {
             animation.count -= 1
-            renderData.y += animation.dx
+            renderData.y += animation.dy
 
             this.isAnimationComplete = false
         } else {
@@ -998,13 +894,13 @@ class RenderObjects {
 
 class Bubble extends RenderObjects {
     static possibleTypes = ['bubble_0', 'bubble_1', 'bubble_2', 'bubble_3', 'bubble_4', 'bubble_5']
-    constructor(x, y) {
+    constructor(x, y, type) {
         super()
         this.Render = BubbleRender
         this.x = x
         this.y = y
         this.r = Settings.bubbleRadius
-        this.type = this.constructor.getRandomType()
+        this.type = type === undefined ? this.constructor.getRandomType() : type
         this.animation = undefined
     }
 
@@ -1090,7 +986,7 @@ class Lives {
     }
 }
 
-export class Vector {
+class Vector {
     #xStart
     #yStart
     #xEnd
@@ -1194,6 +1090,6 @@ onmessage = function (event) {
 
 function onWorkerMessage(command, attachment) {}
 
-// TODO: debug AddBubblesLines
+// TODO: add pop animation
 // TODO: rework bubble collisions
-// TODO: add animations
+// TODO: make pretty view
