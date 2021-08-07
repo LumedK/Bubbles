@@ -3,7 +3,7 @@ export class Settings {
     static columns = 17
     static bubbleRadius = 24
     static bubbleSpeed = 10
-    static bubbleHitRange = Settings.bubbleRadius * 1.25
+    static bubbleHitRange = Settings.bubbleRadius * 1.5 // bubbleRadius < bubbleHitRange < 2 * bubbleRadius
 
     static fieldWidth = Settings.bubbleRadius * (2 * Settings.columns + 1)
     static fieldHeight = Settings.bubbleRadius * (2 * Settings.rows + 1) + 200
@@ -16,6 +16,10 @@ export class Settings {
     static aimArrowHeight = 150
     static aimArrowWidth = 30
     static minAimAngleRad = 0.1745
+
+    static liveCounterX = Settings.bubbleRadius
+    static liveCounterY = Settings.bubbleSpawnY
+    static liveCounterFont = '48px serif'
 
     static maxFps = 60
 
@@ -67,16 +71,18 @@ class Game {
         this.finished = false
         this.aimBubble = undefined
         this.nextBubble = undefined
-        this.lives = new Lives()
+        this.liveCounter = undefined
     }
 
     initiate() {
         Game.game = this
         RenderObjects.objects = []
+
+        StaticBubble.initiate()
+        this.nextBubble = new Bubble(Settings.nextBubbleSpawnX, Settings.nextBubbleSpawnY)
         new AimArrow()
         this.aimBubble = new Bubble(Settings.bubbleSpawnX, Settings.bubbleSpawnY)
-        this.nextBubble = new Bubble(Settings.nextBubbleSpawnX, Settings.nextBubbleSpawnY)
-        StaticBubble.initiate()
+        this.liveCounter = new LiveCounter()
     }
 
     static onWorkerMessage(command, attachment) {
@@ -92,11 +98,11 @@ class Game {
 
         while (!Game.game.finished) {
             const staticBubble = await ShootBubble.complete()
-            PopSameBubbles.complete(staticBubble)
-            PopFreeBubbles.complete()
-            if (Game.game.lives.isEmpty) {
+            await PopSameBubbles.complete(staticBubble)
+            await PopFreeBubbles.complete()
+            if (Game.game.liveCounter.isEmpty) {
                 await AddBubblesLines.complete()
-                PopFreeBubbles.complete()
+                await PopFreeBubbles.complete()
             }
             CheckGameCondition.complete()
         }
@@ -115,50 +121,6 @@ class AbstractGameEvent {
     // static sendRenderData(workerMessage = 'event_complete') {
     //     //sendMessageToMainstream(workerMessage)
     // }
-}
-
-class AddBubblesLines_Old extends AbstractGameEvent {
-    static complete(numberOfAddingLines) {
-        if (!numberOfAddingLines) {
-            numberOfAddingLines =
-                Settings.addLineRule[Bubble.possibleTypes.length - 1][Game.game.lives.maxLives - 1]
-        }
-
-        // shift bubbles lines
-        let rowOffset = undefined
-        for (const staticBubble of StaticBubble.bubbles.slice().reverse()) {
-            if (!staticBubble.type) continue
-            rowOffset = rowOffset || Math.min(numberOfAddingLines, Settings.rows - staticBubble.row)
-            const offsetBubble =
-                StaticBubble.matrix[staticBubble.row + rowOffset][staticBubble.column]
-            offsetBubble.type = staticBubble.type
-            staticBubble.type = undefined
-        }
-        rowOffset = rowOffset || numberOfAddingLines
-        // add bubbles
-        function addBubblesLine() {
-            for (let row = 0; row < rowOffset; row++) {
-                for (const staticBubble of StaticBubble.matrix[row]) {
-                    staticBubble.type = Bubble.getRandomType()
-                }
-            }
-        }
-        function checkTypes() {
-            const types = new Set()
-            for (const staticBubble of StaticBubble.bubbles) {
-                if (!staticBubble.type) continue
-                types.add(staticBubble.type)
-            }
-            return types.size === Bubble.possibleTypes.length
-        }
-
-        while (true) {
-            addBubblesLine()
-            if (checkTypes()) break
-        }
-
-        this.sendRenderData()
-    }
 }
 
 class AddBubblesLines extends AbstractGameEvent {
@@ -198,7 +160,9 @@ class AddBubblesLines extends AbstractGameEvent {
     static getNumberOfAddingLines(numberOfAddingLines) {
         numberOfAddingLines =
             numberOfAddingLines ||
-            Settings.addLineRule[Bubble.possibleTypes.length - 1][Game.game.lives.maxLives - 1]
+            Settings.addLineRule[Bubble.possibleTypes.length - 1][
+                Game.game.liveCounter.maxLives - 1
+            ]
 
         let bottomRowWithBubble = 0
         for (let i = StaticBubble.bubbles.length - 1; i >= 0; i--) {
@@ -230,18 +194,11 @@ class AddBubblesLines extends AbstractGameEvent {
         const yOffset = 2 * Settings.bubbleRadius * numberOfAddingLines
 
         StaticBubble.matrix.forEach((row) => {
-            this.completedMatrix.push(row.map((bubble) => bubble.type))
+            this.completedMatrix.push(row.map(() => undefined))
         })
 
-        for (let rowIndex = 0; rowIndex < Settings.rows; rowIndex++) {
-            for (let columnIndex = 0; columnIndex < Settings.columns; columnIndex++) {
-                const staticBubble = StaticBubble.matrix[rowIndex][columnIndex]
-                if (staticBubble.type) {
-                    const targetBubble =
-                        StaticBubble.matrix[rowIndex + numberOfAddingLines][columnIndex]
-                    staticBubble.animation = new AddBubbleAnimation(targetBubble.y, yOffset)
-                    this.completedMatrix[targetBubble.row][targetBubble.column] = staticBubble.type
-                }
+        StaticBubble.matrix.forEach((row, rowIndex) => {
+            row.forEach((staticBubble, columnIndex) => {
                 if (rowIndex < numberOfAddingLines) {
                     const newBubble = new Bubble(
                         staticBubble.x,
@@ -252,8 +209,14 @@ class AddBubblesLines extends AbstractGameEvent {
                     this.completedMatrix[rowIndex][columnIndex] = newBubble.type
                     this.addedBubbles.add(newBubble)
                 }
-            }
-        }
+                if (staticBubble.type) {
+                    const targetBubble =
+                        StaticBubble.matrix[rowIndex + numberOfAddingLines][columnIndex]
+                    staticBubble.animation = new AddBubbleAnimation(targetBubble.y, yOffset)
+                    this.completedMatrix[targetBubble.row][targetBubble.column] = staticBubble.type
+                }
+            })
+        })
     }
 
     static setCompletedMatrix() {
@@ -299,12 +262,10 @@ class ShootBubble extends AbstractGameEvent {
     static onBubbleWayAnimationComplete() {}
 
     static bubble
-    static staticBubble
-    static wayList = []
+    static targetStaticBubble
 
     static async complete() {
         // waiting for click
-        //sendMessageToMainstream('waiting_for_click')
         await new Promise((resolve, reject) => {
             this.onClick = resolve
         })
@@ -317,182 +278,312 @@ class ShootBubble extends AbstractGameEvent {
 
         this.bubble.animation = this.setAnimation()
 
-        // waiting for complete animation
         await new Promise((resolve, reject) => {
-            //sendMessageToMainstream('waiting_for_complete_animation')
             this.onBubbleWayAnimationComplete = resolve
             sendRenderData()
         })
 
         // complete action
-        this.staticBubble.type = this.bubble.type
+        this.targetStaticBubble.type = this.bubble.type
         this.bubble.type = undefined
         this.bubble = undefined
         Game.game.aimBubble.type = Game.game.nextBubble.type
         Game.game.nextBubble.type = Bubble.getRandomType()
 
-        //sendMessageToMainstream()
-
-        const hitStaticBubble = this.staticBubble
+        const hitStaticBubble = this.targetStaticBubble
         this.clickXY = undefined
         this.bubble = undefined
-        this.staticBubble = undefined
-        this.wayList = []
+        this.targetStaticBubble = undefined
 
         return hitStaticBubble
     }
 
     static setAnimation() {
-        this.getWayList()
-        const lastVector = this.wayList[this.wayList.length - 1]
-        this.addToWayList(
-            new Vector(
-                lastVector.endPointX,
-                lastVector.endPointY,
-                this.staticBubble.x,
-                this.staticBubble.y
-            )
-        )
+        const way = this.getWay()
 
-        return new RenderBubbleWayAnimation(this.wayList)
+        const wayList = []
+        let startX, startY
+        way.forEach((item) => {
+            let { state, x, y } = item
+            switch (state) {
+                case 'start':
+                    startX = x
+                    startY = y
+                    break
+                case 'reflect':
+                    wayList.push(new Vector(startX, startY, x, y))
+                    startX = x
+                    startY = y
+                    break
+                case 'hit':
+                    wayList.push(
+                        new Vector(
+                            startX,
+                            startY,
+                            this.targetStaticBubble.x,
+                            this.targetStaticBubble.y
+                        )
+                    )
+                    break
+            }
+        })
+        return new BubbleWayAnimation(wayList)
     }
 
-    static addToWayList(vector) {
-        const way = vector.copy()
-        this.wayList.push(way)
-    }
-
-    static getStaticBubble(line, aimVector) {
-        let x = 0
-        const y = line[0].y
-        let outLeft = false
-        let outRight = false
-
-        function checkOutSide(aimVector) {
-            aimVector.setEndPointByY(y).endPointX
-            x = aimVector.setEndPointByY(y).endPointX
-            outLeft = x < Settings.bubbleRadius
-            outRight = x > Settings.fieldWidth - Settings.bubbleRadius
-        }
-
-        checkOutSide(aimVector)
-        while (outLeft || outRight) {
-            // set a vector's end point (across vertical sides)
-            const xSide = outLeft
-                ? Settings.bubbleRadius
-                : Settings.fieldWidth - Settings.bubbleRadius
-            aimVector.setEndPointByX(xSide)
-            // add this vector to the way list
-            this.addToWayList(aimVector)
-            // move and reflect the vector at the side point
-            aimVector.moveTo(aimVector.endPointX, aimVector.endPointY)
-            aimVector.reflectByX()
-            // check 'outLeft' and 'outRight'
-            checkOutSide(aimVector)
-        }
-
-        // the 'x' is inside a line
-        for (let staticBubble of line) {
-            const isXInsideBubble =
-                staticBubble.x - Settings.bubbleRadius <= x &&
-                x <= staticBubble.x + Settings.bubbleRadius
-            if (isXInsideBubble) return staticBubble
-        }
-    }
-
-    static getWayList() {
-        const clickXY = this.clickXY
-
-        let aimVector = new Vector(
+    static getWay() {
+        const vector = new Vector(
             Settings.bubbleSpawnX,
             Settings.bubbleSpawnY,
-            clickXY.x,
-            clickXY.y
+            this.clickXY.x,
+            this.clickXY.y
         )
-        const clickAngle = aimVector.angle
+        const clickAngle = vector.angle
         if (Math.abs(clickAngle) < Settings.minAimAngleRad) {
-            aimVector.angle = Settings.minAimAngleRad * (clickAngle < 0 ? -1 : 1)
+            vector.angle = Settings.minAimAngleRad * (clickAngle < 0 ? -1 : 1)
         }
+        const way = [{ state: 'start', x: vector.x, y: vector.y }] // states: ('start', 'reflect', 'hit')
 
-        for (let line of StaticBubble.matrix.slice().reverse()) {
-            const staticBubble = this.getStaticBubble(line, aimVector)
+        for (let rowIndex = Settings.rows; rowIndex >= 0; rowIndex--) {
+            const line = StaticBubble.matrix[rowIndex]
+            let isHit = false
+            let isInCell = false
+            let lineComplete = false
+            let affectedBubble = undefined
+            let minHitDistance = Settings.fieldWidth
+            let intersectionPoint = undefined
 
-            const isEmptyBubble = !staticBubble.type
-            // While game is running, the bottom line should have empty bubbles
-            if (!isEmptyBubble) {
-                aimVector.setEndPointByY(this.staticBubble.y)
-                //<bug fix>: When the vector was reflected and the point on the new line was rejected, the direction of the vector became incorrect
-                if (aimVector.dy > 0) {
-                    aimVector = this.wayList.pop()
-                    aimVector.setEndPointByX(this.staticBubble.x)
+            while (!lineComplete) {
+                for (let columnIndex = 0; columnIndex < Settings.columns; columnIndex++) {
+                    const staticBubble = line[columnIndex]
+                    const intersection = vector.getIntersectionOfPerpendiculars(
+                        staticBubble.x,
+                        staticBubble.y
+                    )
+                    const distance = intersection.distance
+
+                    isInCell = !staticBubble.type && distance <= staticBubble.r
+                    isHit =
+                        (staticBubble.type && distance <= Settings.bubbleHitRange) ||
+                        (rowIndex === 0 && isInCell)
+                    lineComplete = lineComplete || isInCell
+
+                    if (isInCell) {
+                        this.targetStaticBubble = staticBubble
+                    }
+
+                    if (isHit) {
+                        if (distance <= minHitDistance) {
+                            minHitDistance = distance
+                            affectedBubble = staticBubble
+                            intersectionPoint = intersection
+                        }
+                    }
                 }
-                //</bug fix>
-                this.addToWayList(aimVector)
-                return
-            }
+                if (affectedBubble) {
+                    const targetBubbleIsLinked =
+                        affectedBubble === this.targetStaticBubble ||
+                        affectedBubble.adjacentBubbles.findIndex(
+                            (bubble) => bubble === this.targetStaticBubble
+                        ) > -1
 
-            this.staticBubble = staticBubble
+                    if (!targetBubbleIsLinked) {
+                        let minDistance
+                        for (const adjacentBubble of affectedBubble.adjacentBubbles) {
+                            if (adjacentBubble.type) continue
+                            const length = Math.sqrt(
+                                (vector.x - adjacentBubble.x) ** 2 +
+                                    (vector.y - adjacentBubble.y) ** 2
+                            )
+                            if (!minDistance || length <= minDistance) {
+                                minDistance = length
+                                this.targetStaticBubble = adjacentBubble
+                            }
+                        }
+                    }
 
-            const isLeftBubbleInHitRange =
-                staticBubble.column > 0 &&
-                StaticBubble.matrix[staticBubble.row][staticBubble.column - 1].x +
-                    Settings.bubbleHitRange >=
-                    staticBubble.x
-            const isRightBubbleInHitRange =
-                staticBubble.column < Settings.columns - 1 &&
-                StaticBubble.matrix[staticBubble.row][staticBubble.column + 1].x -
-                    Settings.bubbleHitRange <=
-                    staticBubble.x
+                    way.push({
+                        state: 'hit',
+                        x: this.targetStaticBubble.x,
+                        y: this.targetStaticBubble.y
+                    })
+                    //this.getTargetBubble(affectedBubble, intersectionPoint)
+                    return way
+                }
 
-            if (isLeftBubbleInHitRange || isRightBubbleInHitRange) {
-                aimVector.setEndPointByY(staticBubble.y)
-                this.addToWayList(aimVector)
-                return
+                if (lineComplete) break
+                const outLeft = vector.getY(Settings.bubbleRadius) < vector.y
+
+                if (outLeft) vector.setEndPointByX(Settings.bubbleRadius)
+                else vector.setEndPointByX(Settings.fieldWidth - Settings.bubbleRadius)
+
+                const sideX = vector.endPointX
+                const sideY = vector.endPointY
+
+                way.push({ state: 'reflect', x: sideX, y: sideY })
+                vector.moveTo(sideX, sideY)
+                vector.reflectByX()
             }
         }
     }
+
+    // static getTargetBubble(affectedBubble, intersectionPoint, vector) {
+    //     if (!affectedBubble.type) {
+    //         this.targetStaticBubble = affectedBubble
+    //         return
+    //     }
+    //     const centerHit =
+    //         affectedBubble.x - intersectionPoint.x === 0 &&
+    //         affectedBubble.y - intersectionPoint.y === 0
+    //     vector = centerHit
+    //         ? new Vector(affectedBubble.x, affectedBubble.y, vector.x, vector.y)
+    //         : new Vector(
+    //               affectedBubble.x,
+    //               affectedBubble.y,
+    //               intersectionPoint.x,
+    //               intersectionPoint.y
+    //           )
+    //     vector.setEndPointByLength(affectedBubble.r)
+    //     // the intersection point of the circle and vector
+    //     const areaPointX = vector.endPointX
+    //     const areaPointY = vector.endPointY
+    //     const rowCorrectionDistance =
+    //         Math.sqrt(5 * Settings.bubbleRadius ** 2) - 2 * Settings.bubbleRadius + 1100
+
+    //     let minDistance
+    //     for (const adjacentBubble of affectedBubble.adjacentBubbles) {
+    //         if (adjacentBubble.type) continue
+
+    //         let RowCorrection = 0
+    //         if (adjacentBubble.row < affectedBubble.row) RowCorrection = rowCorrectionDistance
+    //         if (adjacentBubble.row > affectedBubble.row) RowCorrection = -rowCorrectionDistance
+
+    //         const length = Math.sqrt(
+    //             (areaPointX - adjacentBubble.x) ** 2 +
+    //                 (areaPointY - RowCorrection - adjacentBubble.y) ** 2
+    //         )
+    //         if (!minDistance || length <= minDistance) {
+    //             minDistance = length
+    //             this.targetStaticBubble = adjacentBubble
+    //         }
+    //     }
+    // }
 }
 
 class PopSameBubbles extends AbstractGameEvent {
-    static complete(staticBubble) {
-        const type = staticBubble.type
-        const bubbleToClearBySteps = [[staticBubble]]
-        const SameTypeBubbles = new Set([staticBubble])
+    static #init = (() => {
+        const preOnWorkerMessage = onWorkerMessage
+        onWorkerMessage = function (command, attachment) {
+            preOnWorkerMessage(command, attachment)
+            PopSameBubbles.onWorkerMessage(command, attachment)
+        }
+    })()
 
-        for (const step of bubbleToClearBySteps) {
+    static onWorkerMessage(command, attachment) {
+        if (command === 'BubblePopAnimation_complete') {
+            this.onBubblePopAnimationComplete()
+        }
+    }
+
+    static onBubblePopAnimationComplete() {}
+
+    static bubblesToClearBySteps // Array
+    static bubblesToClear // Set
+
+    static async complete(staticBubble) {
+        this.getBubblesToClear(staticBubble)
+
+        if (this.bubblesToClear.size >= Settings.bubblesToPop) {
+            this.setAnimationBySteps()
+            this.sendRenderData()
+
+            await new Promise((resolve, reject) => {
+                this.onBubblePopAnimationComplete = resolve
+            })
+
+            this.clearPoppingBubble()
+            this.sendRenderData()
+            this.bubblesToClearBySteps = undefined
+            this.bubblesToClear = undefined
+        } else {
+            Game.game.liveCounter.minusLive()
+        }
+    }
+
+    static getBubblesToClear(staticBubble) {
+        const type = staticBubble.type
+        this.bubblesToClearBySteps = [[staticBubble]]
+        this.bubblesToClear = new Set([staticBubble])
+
+        for (const step of this.bubblesToClearBySteps) {
             const nextStep = []
             for (const staticBubble of step) {
                 for (const adjacentBubble of staticBubble.adjacentBubbles) {
-                    if (adjacentBubble.type === type && !SameTypeBubbles.has(adjacentBubble)) {
+                    if (adjacentBubble.type === type && !this.bubblesToClear.has(adjacentBubble)) {
                         nextStep.push(adjacentBubble)
-                        SameTypeBubbles.add(adjacentBubble)
+                        this.bubblesToClear.add(adjacentBubble)
                     }
                 }
             }
-            if (nextStep.length > 0) bubbleToClearBySteps.push(nextStep)
+            if (nextStep.length > 0) this.bubblesToClearBySteps.push(nextStep)
         }
-
-        if (SameTypeBubbles.size >= Settings.bubblesToPop) {
-            this.clearPoppingBubble(bubbleToClearBySteps)
-        } else {
-            Game.game.lives.minusLive()
-        }
-
-        this.sendRenderData()
     }
 
-    static clearPoppingBubble(bubbleToClearBySteps) {
-        // future: pop animation
-        for (const step of bubbleToClearBySteps) {
-            for (const bubble of step) {
-                bubble.type = undefined
-            }
+    static setAnimationBySteps() {
+        this.bubblesToClearBySteps.forEach((step, stepIndex) => {
+            step.forEach((staticBubble) => {
+                staticBubble.animation = new BubblePopAnimation(stepIndex)
+            })
+        })
+    }
+
+    static clearPoppingBubble() {
+        for (const staticBubble of this.bubblesToClear) {
+            staticBubble.type = undefined
+            staticBubble.animation = undefined
         }
     }
 }
 
 class PopFreeBubbles extends AbstractGameEvent {
-    static complete() {
+    static #init = (() => {
+        const preOnWorkerMessage = onWorkerMessage
+        onWorkerMessage = function (command, attachment) {
+            preOnWorkerMessage(command, attachment)
+            PopFreeBubbles.onWorkerMessage(command, attachment)
+        }
+    })()
+
+    static onWorkerMessage(command, attachment) {
+        if (command === 'BubblePopAnimation_complete') {
+            this.onBubblePopAnimationComplete()
+        }
+    }
+
+    static onBubblePopAnimationComplete() {}
+
+    static bubblesToClearBySteps // Array
+    static bubblesToClear // Set
+
+    static async complete(staticBubble) {
+        this.getBubblesToClear(staticBubble)
+        this.setAnimationBySteps()
+        this.sendRenderData()
+
+        if (this.bubblesToClear.size > 0) {
+            await new Promise((resolve, reject) => {
+                this.onBubblePopAnimationComplete = resolve
+            })
+        }
+        this.clearPoppingBubble()
+        this.sendRenderData()
+        this.bubblesToClearBySteps = undefined
+        this.bubblesToClear = undefined
+    }
+
+    static getBubblesToClear() {
+        this.bubblesToClearBySteps = []
+        this.bubblesToClear = new Set()
+
         const linkedBubbles = new Set()
         // add static bubbles from 1st row
         for (const staticBubble of StaticBubble.matrix[0]) {
@@ -505,33 +596,42 @@ class PopFreeBubbles extends AbstractGameEvent {
             }
         }
         // get suspended bubbles
-        const bubbleToClearBySteps = []
         for (const row of StaticBubble.matrix) {
             const step = []
             for (const staticBubble of row) {
                 if (staticBubble.type && !linkedBubbles.has(staticBubble)) {
                     step.push(staticBubble)
+                    this.bubblesToClear.add(staticBubble)
                 }
             }
-            if (step.length > 0) bubbleToClearBySteps.push(step)
+            if (step.length > 0) this.bubblesToClearBySteps.push(step)
         }
-
-        this.clearPoppingBubble(bubbleToClearBySteps)
-        this.sendRenderData()
     }
 
-    static clearPoppingBubble(bubbleToClearBySteps) {
-        // future: pop animation
-        for (const step of bubbleToClearBySteps) {
-            for (const bubble of step) {
-                bubble.type = undefined
-            }
+    static setAnimationBySteps() {
+        this.bubblesToClearBySteps.forEach((step, stepIndex) => {
+            step.forEach((staticBubble) => {
+                staticBubble.animation = new BubblePopAnimation(stepIndex)
+            })
+        })
+    }
+
+    static clearPoppingBubble() {
+        for (const staticBubble of this.bubblesToClear) {
+            staticBubble.type = undefined
+            staticBubble.animation = undefined
         }
     }
 }
 
 class CheckGameCondition extends AbstractGameEvent {
     static complete() {
+        this.checkBubblesType()
+        this.checkNextBubbles()
+        this.checkWinConditions()
+    }
+
+    static checkWinConditions() {
         let win = true
         for (const bubble of StaticBubble.matrix[0]) {
             win = win && !bubble.type
@@ -548,6 +648,24 @@ class CheckGameCondition extends AbstractGameEvent {
         Game.game.finished = win || lose
         if (win) postMessage(messageToMainstream('game_over_win'))
         if (lose) postMessage(messageToMainstream('game_over_lose'))
+    }
+
+    static checkNextBubbles() {
+        function havePossibleType(bubble) {
+            return Bubble.possibleTypes.findIndex((type) => type === bubble.type) > -1
+        }
+
+        const aimBubble = Game.game.aimBubble
+        const nextBubble = Game.game.nextBubble
+        if (!havePossibleType(aimBubble)) aimBubble.type = Bubble.getRandomType()
+        if (!havePossibleType(nextBubble)) nextBubble.type = Bubble.getRandomType()
+        sendRenderData()
+    }
+
+    static checkBubblesType() {
+        const types = new Set()
+        StaticBubble.bubbles.forEach((staticBubble) => types.add(staticBubble.type))
+        Bubble.possibleTypes = Bubble.possibleTypes.filter((type) => types.has(type))
     }
 }
 
@@ -636,15 +754,15 @@ class BubbleRender extends AbstractRender {
     })()
 
     static getRenderData(bubble) {
-        if (!bubble.type)
-            return {
-                Render: 'BubbleRender',
-                x: bubble.x,
-                y: bubble.y,
-                r: 1,
-                type: 'bubble_0',
-                animation: undefined
-            }
+        if (!bubble.type) return
+        // {
+        //     Render: 'BubbleRender',
+        //     x: bubble.x,
+        //     y: bubble.y,
+        //     r: 1,
+        //     type: 'bubble_0',
+        //     animation: undefined
+        // }
         return {
             Render: 'BubbleRender',
             x: bubble.x,
@@ -717,20 +835,44 @@ class AimArrowRender extends AbstractRender {
     }
 }
 
-class RenderBubbleWayAnimation extends AbstractRender {
+class LivesRender extends AbstractRender {
+    static #init = (() => {
+        super.init(this)
+    })()
+
+    static getRenderData(liveCounter) {
+        return {
+            Render: 'LivesRender',
+            maxLives: liveCounter.maxLives,
+            currentLives: liveCounter.currentLives
+        }
+    }
+
+    static draw(field, renderData) {
+        const ctx = field.ctx
+
+        const text =
+            '❤️'.repeat(renderData.currentLives) +
+            '🖤'.repeat(renderData.maxLives - renderData.currentLives)
+        ctx.font = Settings.liveCounterFont
+        ctx.fillText(text, Settings.liveCounterX, Settings.liveCounterY)
+    }
+}
+
+class BubbleWayAnimation extends AbstractRender {
     static #init = (() => {
         super.init(this)
 
         const afterRender = GameRender.afterRender
         GameRender.afterRender = function (renderState) {
             afterRender(renderState)
-            RenderBubbleWayAnimation.afterRender(renderState)
+            BubbleWayAnimation.afterRender(renderState)
         }
 
         const beforeRender = GameRender.beforeRender
         GameRender.beforeRender = function (renderState) {
             beforeRender(renderState)
-            RenderBubbleWayAnimation.beforeRender(renderState)
+            BubbleWayAnimation.beforeRender(renderState)
         }
     })()
 
@@ -739,7 +881,7 @@ class RenderBubbleWayAnimation extends AbstractRender {
 
     constructor(wayList) {
         super()
-        this.Render = RenderBubbleWayAnimation
+        this.Render = BubbleWayAnimation
         this.wayList = wayList
     }
 
@@ -747,7 +889,7 @@ class RenderBubbleWayAnimation extends AbstractRender {
         if (!animation) return undefined
 
         const animationData = {
-            Render: 'RenderBubbleWayAnimation',
+            Render: 'BubbleWayAnimation',
             count: 0,
             dx: 0,
             dy: 0,
@@ -868,6 +1010,81 @@ class AddBubbleAnimation extends AbstractRender {
     }
 }
 
+class BubblePopAnimation extends AbstractRender {
+    static #init = (() => {
+        super.init(this)
+        const afterRender = GameRender.afterRender
+        GameRender.afterRender = function (renderState) {
+            afterRender(renderState)
+            BubblePopAnimation.afterRender(renderState)
+        }
+
+        const beforeRender = GameRender.beforeRender
+        GameRender.beforeRender = function (renderState) {
+            beforeRender(renderState)
+            BubblePopAnimation.beforeRender(renderState)
+        }
+    })()
+
+    static isAnimationBegin = false
+    static isAnimationComplete = true
+    static starTime // ms
+
+    static castTime = 250 // ms
+    static delay = 170 // ms
+
+    constructor(stepNumber = 0) {
+        super()
+        this.constructor.starTime = this.constructor.starTime || Date.now()
+
+        this.Render = BubblePopAnimation
+
+        this.delayCount = stepNumber * Settings.maxFps * (this.constructor.delay / 1000)
+        this.dSize = -Settings.bubbleRadius / (Settings.maxFps * (this.constructor.castTime / 1000))
+    }
+
+    static getRenderData(animation) {
+        if (!animation) return undefined
+        const animationData = {
+            Render: 'BubblePopAnimation',
+            delayCount: animation.delayCount,
+            dSize: animation.dSize
+        }
+        return animationData
+    }
+
+    static draw(field, renderData) {
+        this.isAnimationBegin = true
+        const animation = renderData.animation
+
+        if (animation.delayCount > 0) {
+            animation.delayCount -= 1
+        } else {
+            renderData.r += animation.dSize
+        }
+
+        if (renderData.r <= 0) {
+            renderData.r = 0
+            renderData.animation = undefined
+        } else {
+            this.isAnimationComplete = false
+        }
+    }
+
+    static beforeRender(renderState) {
+        this.isAnimationComplete = true
+    }
+
+    static afterRender(renderState) {
+        if (this.isAnimationBegin && this.isAnimationComplete) {
+            this.isAnimationBegin = false
+            this.isAnimationComplete = true
+            this.starTime = undefined
+            worker.postMessage(messageToWorker('BubblePopAnimation_complete'))
+        }
+    }
+}
+
 // Game objects
 
 class RenderObjects {
@@ -927,9 +1144,9 @@ class StaticBubble extends Bubble {
     }
 
     static initiate() {
+        //const columnDistance = Math.sqrt(5 * Settings.bubbleRadius ** 2) - 2 * Settings.bubbleRadius
         const radius = Settings.bubbleRadius
         for (let row = 0; row <= Settings.rows; row++) {
-            // StaticBubble.matrix[row] = []
             for (let column = 0; column < Settings.columns; column++) {
                 new StaticBubble({
                     row: row,
@@ -966,13 +1183,14 @@ class AimArrow extends RenderObjects {
     }
 }
 
-// Special objects
-
-class Lives {
+class LiveCounter extends RenderObjects {
     constructor() {
+        super()
+        this.Render = LivesRender
         this.maxLives = Settings.maxLives
         this.currentLives = Settings.maxLives
     }
+
     minusLive() {
         this.currentLives--
     }
@@ -985,6 +1203,8 @@ class Lives {
         return false
     }
 }
+
+// Special objects
 
 class Vector {
     #xStart
@@ -1044,16 +1264,23 @@ class Vector {
     }
 
     setEndPointByX(newXEnd) {
+        if (newXEnd === this.#xStart) throw 'vector.dx = 0!'
         this.#yEnd = this.getY(newXEnd)
         this.#xEnd = newXEnd
         this.#length = Math.sqrt(this.dx ** 2 + this.dy ** 2)
         return this
     }
     setEndPointByY(newYEnd) {
+        if (newYEnd === this.#yStart) throw 'vector.dy = 0!'
         this.#xEnd = this.getX(newYEnd)
         this.#yEnd = newYEnd
         this.#length = Math.sqrt(this.dx ** 2 + this.dy ** 2)
         return this
+    }
+
+    setEndPointByLength(newLength) {
+        const k = this.#length / newLength
+        this.setEndPointByY(this.dy / k + this.#yStart)
     }
 
     moveTo(x, y) {
@@ -1073,6 +1300,44 @@ class Vector {
         return this
     }
 
+    getIntersectionOfPerpendiculars(x, y) {
+        // get the intersection point of the continuation of the vector with the perpendicular from the point(x,y)
+        const vectorX1 = this.#xStart
+        const vectorY1 = this.#yStart
+        const vectorX2 = this.#xEnd
+        const vectorY2 = this.#yEnd
+
+        const perpendicularX1 = x
+        const perpendicularY1 = y
+        const perpendicularX2 = x + this.dy
+        const perpendicularY2 = y - this.dx
+
+        if (vectorX2 - vectorX1 === 0) {
+            return Math.sqrt((x - vectorY1) ** 2 + (y - perpendicularX1) ** 2)
+        }
+
+        // Ax + By + C = 0
+        const vectorA = vectorY2 - vectorY1
+        const vectorB = vectorX1 - vectorX2
+        const vectorC = vectorY1 * (vectorX2 - vectorX1) - vectorX1 * (vectorY2 - vectorY1)
+
+        const perpendicularA = perpendicularY2 - perpendicularY1
+        const perpendicularB = perpendicularX1 - perpendicularX2
+        const perpendicularC =
+            perpendicularY1 * (perpendicularX2 - perpendicularX1) -
+            perpendicularX1 * (perpendicularY2 - perpendicularY1)
+
+        const intersectionX =
+            (-vectorC * perpendicularB + perpendicularC * vectorB) /
+            (vectorA * perpendicularB - perpendicularA * vectorB)
+        const intersectionY =
+            (-vectorA * perpendicularC + perpendicularA * vectorC) /
+            (vectorA * perpendicularB - perpendicularA * vectorB)
+        const length = Math.sqrt((x - intersectionX) ** 2 + (y - intersectionY) ** 2)
+
+        return { x: intersectionX, y: intersectionY, distance: length }
+    }
+
     copy() {
         return new Vector(this.#xStart, this.#yStart, this.#xEnd, this.#yEnd)
     }
@@ -1090,6 +1355,4 @@ onmessage = function (event) {
 
 function onWorkerMessage(command, attachment) {}
 
-// TODO: add pop animation
-// TODO: rework bubble collisions
-// TODO: make pretty view
+// TODO: add mobile support

@@ -48,9 +48,6 @@ class Field {
     onClick(event) {
         const cursorXY = this.translateCursor(event.layerX, event.layerY)
         worker.postMessage(messageToWorker('click', cursorXY))
-        //if (MainstreamStuff.currentWorkerMessage === 'waiting_for_click') {
-        //     MainstreamStuff.worker.postMessage(messageToWorker('click', cursorXY))
-        // }
     }
 }
 
