@@ -24,15 +24,8 @@ export class Settings {
     static maxFps = 60
 
     static bubblesToPop = 3
-    static maxLives = 4
-    static addLineRule = [
-        [4, 5, 6, 7],
-        [3, 4, 5, 6],
-        [2, 3, 4, 5],
-        [1, 2, 3, 4],
-        [1, 2, 3, 4],
-        [1, 1, 2, 2]
-    ] // ROW: possible balls; COLUMN: max lives; VALUE: number of adding lines
+    static maxLives = 5
+    static addLineRule = [8, 7, 6, 4, 3, 2]
 }
 
 export function setWorker(setWorker) {
@@ -118,9 +111,6 @@ class AbstractGameEvent {
     static sendRenderData() {
         sendRenderData()
     }
-    // static sendRenderData(workerMessage = 'event_complete') {
-    //     //sendMessageToMainstream(workerMessage)
-    // }
 }
 
 class AddBubblesLines extends AbstractGameEvent {
@@ -159,10 +149,7 @@ class AddBubblesLines extends AbstractGameEvent {
 
     static getNumberOfAddingLines(numberOfAddingLines) {
         numberOfAddingLines =
-            numberOfAddingLines ||
-            Settings.addLineRule[Bubble.possibleTypes.length - 1][
-                Game.game.liveCounter.maxLives - 1
-            ]
+            numberOfAddingLines || Settings.addLineRule[Bubble.possibleTypes.length - 1]
 
         let bottomRowWithBubble = 0
         for (let i = StaticBubble.bubbles.length - 1; i >= 0; i--) {
@@ -755,14 +742,6 @@ class BubbleRender extends AbstractRender {
 
     static getRenderData(bubble) {
         if (!bubble.type) return
-        // {
-        //     Render: 'BubbleRender',
-        //     x: bubble.x,
-        //     y: bubble.y,
-        //     r: 1,
-        //     type: 'bubble_0',
-        //     animation: undefined
-        // }
         return {
             Render: 'BubbleRender',
             x: bubble.x,
@@ -1144,7 +1123,6 @@ class StaticBubble extends Bubble {
     }
 
     static initiate() {
-        //const columnDistance = Math.sqrt(5 * Settings.bubbleRadius ** 2) - 2 * Settings.bubbleRadius
         const radius = Settings.bubbleRadius
         for (let row = 0; row <= Settings.rows; row++) {
             for (let column = 0; column < Settings.columns; column++) {
@@ -1164,7 +1142,6 @@ class StaticBubble extends Bubble {
                 if (!StaticBubble.matrix[row][column]) return
                 bubble.adjacentBubbles.push(StaticBubble.matrix[row][column])
             }
-            // add(bubble, bubble.row, bubble.column) // current
             add(bubble, bubble.row, bubble.column - 1) // left cell
             add(bubble, bubble.row, bubble.column + 1) // right cell
             add(bubble, bubble.row - 1, bubble.column) // top cell
