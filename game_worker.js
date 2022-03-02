@@ -393,7 +393,6 @@ class ShootBubble extends AbstractGameEvent {
                         x: this.targetStaticBubble.x,
                         y: this.targetStaticBubble.y
                     })
-                    //this.getTargetBubble(affectedBubble, intersectionPoint)
                     return way
                 }
 
@@ -412,48 +411,6 @@ class ShootBubble extends AbstractGameEvent {
             }
         }
     }
-
-    // static getTargetBubble(affectedBubble, intersectionPoint, vector) {
-    //     if (!affectedBubble.type) {
-    //         this.targetStaticBubble = affectedBubble
-    //         return
-    //     }
-    //     const centerHit =
-    //         affectedBubble.x - intersectionPoint.x === 0 &&
-    //         affectedBubble.y - intersectionPoint.y === 0
-    //     vector = centerHit
-    //         ? new Vector(affectedBubble.x, affectedBubble.y, vector.x, vector.y)
-    //         : new Vector(
-    //               affectedBubble.x,
-    //               affectedBubble.y,
-    //               intersectionPoint.x,
-    //               intersectionPoint.y
-    //           )
-    //     vector.setEndPointByLength(affectedBubble.r)
-    //     // the intersection point of the circle and vector
-    //     const areaPointX = vector.endPointX
-    //     const areaPointY = vector.endPointY
-    //     const rowCorrectionDistance =
-    //         Math.sqrt(5 * Settings.bubbleRadius ** 2) - 2 * Settings.bubbleRadius + 1100
-
-    //     let minDistance
-    //     for (const adjacentBubble of affectedBubble.adjacentBubbles) {
-    //         if (adjacentBubble.type) continue
-
-    //         let RowCorrection = 0
-    //         if (adjacentBubble.row < affectedBubble.row) RowCorrection = rowCorrectionDistance
-    //         if (adjacentBubble.row > affectedBubble.row) RowCorrection = -rowCorrectionDistance
-
-    //         const length = Math.sqrt(
-    //             (areaPointX - adjacentBubble.x) ** 2 +
-    //                 (areaPointY - RowCorrection - adjacentBubble.y) ** 2
-    //         )
-    //         if (!minDistance || length <= minDistance) {
-    //             minDistance = length
-    //             this.targetStaticBubble = adjacentBubble
-    //         }
-    //     }
-    // }
 }
 
 class PopSameBubbles extends AbstractGameEvent {
